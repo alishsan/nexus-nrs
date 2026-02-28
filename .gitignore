@@ -1,0 +1,93 @@
+# Clojure/Leiningen
+target/
+web-dashboard/target/
+web-dashboard/public/js/out/
+.lein-failures
+.lein-repl-history
+.lein-repl-port
+.nrepl-port
+*.clj~
+*.cljs~
+*.cljc~
+
+# Build artifacts
+classes/
+checkouts/
+pom.xml
+pom.xml.asc
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Generated data and output
+output/
+plots/
+data/
+paper_data/
+results/
+
+# Paper (manuscripts, cover letters, data generators, build artifacts)
+paper/
+
+# Temporary analysis files
+*.png
+*.pdf
+*_analysis.png
+*_conversion_analysis.png
+*_cross_sections.png
+*_vs_experiment.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# IDE and editor files
+.vscode/
+.idea/
+.calva/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+._*
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# LaTeX
+*.tex
+*.aux
+*.synctex.gz
+*.out
+*.spl
+*.bib
+*Notes.bib
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# clj-kondo / LSP
+.clj-kondo/
+.clj-kondo/.cache/
+*.transit.json
+.lsp/.cache/
+
+# Packaged metadata
+META-INF/
