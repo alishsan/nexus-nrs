@@ -439,6 +439,8 @@
   (jetty/run-jetty app {:port port :join? false}))
 
 (defn -main [& args]
-  (let [port (or (some-> args first Integer/parseInt) 3000)]
-    (println (str "Starting DWBA Web Dashboard on port " port))
+  (let [port (or (some-> (System/getenv "PORT") Integer/parseInt)
+                 (some-> args first Integer/parseInt)
+                 3000)]
+    (println (str "Starting Nexus-NRS Web Dashboard on port " port))
     (start-server port)))
