@@ -1,0 +1,49 @@
+{
+  "11Li(p,d)10Li": {
+    "reaction": "11Li(p,d)10Li",
+    "reference": "PL/B,755,481,2016 (A.Sanetullaev et al.)",
+    "E_lab": 5.7,
+    "E_lab_unit": "MeV/A",
+    "E_relative": 0.62,
+    "E_relative_unit": "MeV",
+    "facility": "ISACII facility at TRIUMF",
+    "exfor_entry": "C2217001",
+    "data": [
+      {
+        "angle_deg": 19.6,
+        "dsigma_mb_sr": 32.20,
+        "error_mb_sr": 7.10
+      },
+      {
+        "angle_deg": 29.6,
+        "dsigma_mb_sr": 22.59,
+        "error_mb_sr": 5.49
+      },
+      {
+        "angle_deg": 39.6,
+        "dsigma_mb_sr": 11.30,
+        "error_mb_sr": 3.21
+      },
+      {
+        "angle_deg": 64.9,
+        "dsigma_mb_sr": 3.82,
+        "error_mb_sr": 0.74
+      },
+      {
+        "angle_deg": 74.8,
+        "dsigma_mb_sr": 2.69,
+        "error_mb_sr": 0.48
+      },
+      {
+        "angle_deg": 84.9,
+        "dsigma_mb_sr": 1.79,
+        "error_mb_sr": 0.33
+      },
+      {
+        "angle_deg": 94.9,
+        "dsigma_mb_sr": 1.38,
+        "error_mb_sr": 0.33
+      }
+    ]
+  }
+}
