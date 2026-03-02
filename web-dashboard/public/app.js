@@ -1,17 +1,17 @@
 // DWBA Web Dashboard JavaScript
 class DWBADashboard {
     constructor() {
-        // Always send API requests to the dashboard server (port 3000) unless we're already on it
+        // Use same-origin for API when served over http/https (e.g. Railway); use localhost only when opened from file://
         const dashboardUrl = 'http://localhost:3000';
         const apiFromQuery = new URLSearchParams(window.location.search).get('api');
-        const onDashboard = window.location.origin === 'http://localhost:3000';
-        this.apiBase = apiFromQuery || (onDashboard ? '' : dashboardUrl);
+        const sameOrigin = window.location.protocol === 'http:' || window.location.protocol === 'https:';
+        this.apiBase = apiFromQuery !== null ? apiFromQuery : (sameOrigin ? '' : dashboardUrl);
         this.currentData = null;
         this.initializeEventListeners();
         this.loadDefaultParameters();
         this.checkApiHealth();
         this.loadTransferDefault();  // (p,d) default DCS on Transfer tab
-        if (!onDashboard && !apiFromQuery) {
+        if (this.apiBase === dashboardUrl) {
             this.showApiNotice(dashboardUrl);
         }
     }
@@ -56,7 +56,11 @@ class DWBADashboard {
         } catch (e) {
             const statusDiv = document.getElementById('status-messages');
             if (statusDiv) {
-                statusDiv.innerHTML = '<div class="error"><i class="fas fa-exclamation-triangle"></i> Dashboard API not reachable. Start the server: <code>cd web-dashboard && lein run</code>, then <a href="http://localhost:3000">open http://localhost:3000</a> in your browser.</div>';
+                const isLocalDev = this.apiBase === 'http://localhost:3000';
+                const msg = isLocalDev
+                    ? '<div class="error"><i class="fas fa-exclamation-triangle"></i> Dashboard API not reachable. Start the server: <code>cd web-dashboard && lein run</code>, then <a href="http://localhost:3000">open http://localhost:3000</a> in your browser.</div>'
+                    : '<div class="error"><i class="fas fa-exclamation-triangle"></i> Dashboard API not reachable. Please try again later or check the server.</div>';
+                statusDiv.innerHTML = msg;
             }
         }
     }
@@ -291,7 +295,9 @@ class DWBADashboard {
             console.error('Calculation error:', error);
             let msg = error.message;
             if (msg.includes('404')) {
-                msg = 'API not found. Start the server: cd web-dashboard && lein run — then open http://localhost:3000 in your browser (click the link above).';
+                msg = this.apiBase === 'http://localhost:3000'
+                    ? 'API not found. Start the server: cd web-dashboard && lein run — then open http://localhost:3000 in your browser (click the link above).'
+                    : 'API not found. The server may be starting or temporarily unavailable.';
             }
             this.showStatus(`Error: ${msg}`, 'error');
         } finally {
@@ -327,7 +333,9 @@ class DWBADashboard {
             console.error('Calculation error:', error);
             let msg = error.message;
             if (msg.includes('404')) {
-                msg = 'API not found. Start the server: cd web-dashboard && lein run — then open http://localhost:3000 in your browser (click the link above).';
+                msg = this.apiBase === 'http://localhost:3000'
+                    ? 'API not found. Start the server: cd web-dashboard && lein run — then open http://localhost:3000 in your browser (click the link above).'
+                    : 'API not found. The server may be starting or temporarily unavailable.';
             }
             this.showStatus(`Error: ${msg}`, 'error');
         } finally {
