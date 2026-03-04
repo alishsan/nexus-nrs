@@ -8,6 +8,7 @@
                  [generateme/fastmath "3.0.0-alpha4-SNAPSHOT" :exclusions [com.github.haifengl/smile-mkl]]
                  [incanter/incanter-core "1.9.3"]
                  [incanter/incanter-charts "1.9.3"]
-                 [com.hypirion/clj-xchart "0.2.0"]]
+                 [com.hypirion/clj-xchart "0.2.0"]
+                 [org.clojure/data.json "2.4.0"]]
 
   :repl-options {:init-ns dwba.core})
