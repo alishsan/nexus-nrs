@@ -1,0 +1,9 @@
+.git
+.gitignore
+target
+web-dashboard/target
+web-dashboard/public/js/out
+paper
+*.md
+.env*
+.dockerignore
