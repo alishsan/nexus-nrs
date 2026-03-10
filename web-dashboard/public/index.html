@@ -325,6 +325,33 @@
                 <div class="tab-pane fade" id="elastic-panel" role="tabpanel">
                     <div class="control-panel mb-3">
                         <h4><i class="fas fa-bullseye"></i> Elastic Scattering</h4>
+                        <p class="text-muted small mb-2">
+                            Computes single-channel elastic scattering for a chosen projectile + target, using the Woods–Saxon parameters above
+                            as the effective optical potential for that system.
+                        </p>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <div class="parameter-group">
+                                    <label for="elastic_projectile">Projectile</label>
+                                    <select class="form-select" id="elastic_projectile">
+                                        <option value="p" selected>Proton (p)</option>
+                                        <option value="n">Neutron (n)</option>
+                                        <option value="d">Deuteron (d)</option>
+                                        <option value="a">Alpha (α)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="parameter-group">
+                                    <label for="elastic_target">Target nucleus</label>
+                                    <select class="form-select" id="elastic_target">
+                                        <option value="16O" selected>¹⁶O</option>
+                                        <option value="12C">¹²C</option>
+                                        <option value="generic">Generic</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
                         <p class="text-muted small mb-2">Real Woods-Saxon (V₀, R₀, a₀) from main parameters. Optional complex (optical) Woods-Saxon for absorption:</p>
                         <div class="row">
                             <div class="col-md-4">

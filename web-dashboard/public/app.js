@@ -191,6 +191,12 @@ class DWBADashboard {
         else if (params.lambda !== undefined) document.getElementById('lambda').value = params.lambda;
         if (params.beta !== undefined) document.getElementById('beta').value = params.beta;
         if (params.reaction_type !== undefined) document.getElementById('reaction_type').value = params.reaction_type;
+        if (params.elastic_projectile !== undefined && document.getElementById('elastic_projectile')) {
+            document.getElementById('elastic_projectile').value = params.elastic_projectile;
+        }
+        if (params.elastic_target !== undefined && document.getElementById('elastic_target')) {
+            document.getElementById('elastic_target').value = params.elastic_target;
+        }
         
         // Update slider displays
         document.getElementById('V0-value').textContent = `${params.V0} MeV`;
@@ -237,6 +243,8 @@ class DWBADashboard {
             target: (document.getElementById('transfer_target') || {}).value || '16O',
             projectile: (document.getElementById('inelastic_projectile') || {}).value || 'p',
             inelastic_target: (document.getElementById('inelastic_target') || {}).value || '12C',
+            elastic_projectile: (document.getElementById('elastic_projectile') || {}).value || 'p',
+            elastic_target: (document.getElementById('elastic_target') || {}).value || '16O',
             // Complex Woods-Saxon for elastic (optical potential)
             W0: num('elastic_W0', 0),
             R_W: num('elastic_RW', 2.0),

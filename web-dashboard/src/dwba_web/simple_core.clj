@@ -279,7 +279,9 @@
           ws (ws-params-from p)
           ws-w (ws-w-params-from p)
           radius (parse-double-default (:radius p) 3.0)
-          angles (or (seq (parse-doubles (:angles p))) (range 0.0 181.0 10.0))]
+          angles (or (seq (parse-doubles (:angles p))) (range 0.0 181.0 10.0))
+          elastic-projectile (or (:elastic_projectile p) (:projectile p) "p")
+          elastic-target (or (:elastic_target p) (:inelastic_target p) (:target p) "16O")]
       (let [dsigma-fn (or (resolve 'functions/differential-cross-section) (do (require 'functions) (resolve 'functions/differential-cross-section)))
             L-max (apply max L-values)
             ;; Elastic dσ/dΩ: currently uses real Woods-Saxon (functions/differential-cross-section).
@@ -291,7 +293,13 @@
                              {:energy E :angle theta :differential_cross_section dsigma}))]
         (response {:success true
                    :data {:elastic elastic-data
-                          :parameters (merge {:energies energies :L_values L-values :ws_params ws :radius radius :angles angles}
+                          :parameters (merge {:energies energies
+                                              :L_values L-values
+                                              :ws_params ws
+                                              :radius radius
+                                              :angles angles
+                                              :elastic_projectile elastic-projectile
+                                              :elastic_target elastic-target}
                                              (when ws-w {:ws_w_params ws-w :complex_optical true}))}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
