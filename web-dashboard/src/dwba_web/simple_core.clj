@@ -199,6 +199,12 @@
   (let [s (str/trim (str v))]
     (if (str/blank? s) default (Double/parseDouble s))))
 
+(defn- parse-int-default
+  "Parse v as int; if nil or blank, return default."
+  [v default]
+  (let [s (str/trim (str v))]
+    (if (str/blank? s) default (Integer/parseInt s))))
+
 (defn- ws-params-from [params]
   [(parse-double-default (:V0 params) 40.0)
    (parse-double-default (:R0 params) 2.0)
@@ -281,7 +287,11 @@
           radius (parse-double-default (:radius p) 3.0)
           angles (or (seq (parse-doubles (:angles p))) (range 0.0 181.0 10.0))
           elastic-projectile (or (:elastic_projectile p) (:projectile p) "p")
-          elastic-target (or (:elastic_target p) (:inelastic_target p) (:target p) "16O")]
+          elastic-target (or (:elastic_target p) (:inelastic_target p) (:target p) "16O")
+          elastic-target-A (when (= (str elastic-target) "generic")
+                            (let [v (parse-int-default (:elastic_target_A p) 16)] (when (and (number? v) (>= v 1) (<= v 300)) v)))
+          elastic-target-Z (when (= (str elastic-target) "generic")
+                            (let [v (parse-int-default (:elastic_target_Z p) 8)] (when (and (number? v) (>= v 0) (<= v 120)) v)))]
       (let [dsigma-fn (or (resolve 'functions/differential-cross-section) (do (require 'functions) (resolve 'functions/differential-cross-section)))
             L-max (apply max L-values)
             ;; Elastic dσ/dΩ: currently uses real Woods-Saxon (functions/differential-cross-section).
@@ -300,6 +310,8 @@
                                               :angles angles
                                               :elastic_projectile elastic-projectile
                                               :elastic_target elastic-target}
+                                             (when elastic-target-A {:elastic_target_A elastic-target-A})
+                                             (when elastic-target-Z {:elastic_target_Z elastic-target-Z})
                                              (when ws-w {:ws_w_params ws-w :complex_optical true}))}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 

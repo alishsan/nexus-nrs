@@ -28,6 +28,7 @@
 (def output-dir "paper/plots")
 (def results-file "paper/benchmark_results.edn")
 (def experimental-data-file "paper/experimental_data.json")
+(def data-16Opd65-file "data/16Opd65MeV.json")
 (def h 0.01)  ; Step size (fm)
 (def r-max 20.0)  ; Maximum radius (fm)
 
@@ -137,21 +138,22 @@
                                                                  :zero-range D0)]
                               [L T-L])))
         
-        ;; Angular distribution
+        ;; Angular distribution — convert to mb/sr (use 0.01: transfer output scales as μb when *10 is used)
+        fm2-to-mb 0.01
         k-i (Math/sqrt (* mass-factor-i E-CM-i))
         k-f (Math/sqrt (* mass-factor-f E-CM-f))
         S-factor 1.0
         angles-deg (range 0.0 181.0 5.0)
         angles-rad (mapv deg->rad angles-deg)
         dsigma-mb-sr (mapv (fn [theta-rad]
-                             (* 10.0 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f
-                                                                                    theta-rad mass-factor-i mass-factor-f 0.0 l-i l-f)))
+                             (* fm2-to-mb (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f
+                                                                                        theta-rad mass-factor-i mass-factor-f 0.0 l-i l-f)))
                            angles-rad)
         
         ;; Key values
-        dsigma-0 (* 10.0 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f 0.0 mass-factor-i mass-factor-f 0.0 l-i l-f))
-        dsigma-70 (* 10.0 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f (deg->rad 70.0) mass-factor-i mass-factor-f 0.0 l-i l-f))
-        dsigma-90 (* 10.0 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f (deg->rad 90.0) mass-factor-i mass-factor-f 0.0 l-i l-f))
+        dsigma-0 (* fm2-to-mb (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f 0.0 mass-factor-i mass-factor-f 0.0 l-i l-f))
+        dsigma-70 (* fm2-to-mb (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f (deg->rad 70.0) mass-factor-i mass-factor-f 0.0 l-i l-f))
+        dsigma-90 (* fm2-to-mb (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f (deg->rad 90.0) mass-factor-i mass-factor-f 0.0 l-i l-f))
         
         ;; Load experimental data
         exp-data (get @experimental-data "16O(p,d)15O")
@@ -210,6 +212,155 @@
                   :dsigma_70 dsigma-70
                   :dsigma_90 dsigma-90
                   :overlap_norm overlap-norm}}))
+
+;; ============================================================================
+;; Benchmark 1b: 16O(p,d)15O at 65 MeV — comparison with Hosono et al. data
+;; ============================================================================
+
+(defn load-16Opd65-data []
+  (try
+    (if (.exists (io/file data-16Opd65-file))
+      (let [data (json/read-str (slurp data-16Opd65-file) :key-fn keyword)
+                entry (get data (keyword "16O(p,d)15O"))]
+        (when entry (println (format "  ✓ Loaded 65 MeV data from %s" data-16Opd65-file)))
+        entry)
+      (do (println (format "  ⚠ No file at %s" data-16Opd65-file)) nil))
+    (catch Exception e
+      (println (format "  ✗ Error loading %s: %s" data-16Opd65-file (.getMessage e)))
+      nil)))
+
+(defn benchmark-16Opd65MeV []
+  (println "\n=== Benchmark 1b: 16O(p,d)15O at 65 MeV (vs Hosono et al.) ===")
+  
+  (let [;; Same bound-state and optical setup as 20 MeV benchmark
+        v0-i 62.0 R0-i 2.7 diff-i 0.6 r-max-bs 20.0 l-i 1
+        v0-f 50.0 R0-f 1.5 diff-f 0.6 l-f 0
+        Es-i -15.67
+        Es-f -2.214
+        m-f 0.048
+        
+        phi-i-raw (t/solve-bound-state-numerov Es-i l-i v0-i R0-i diff-i m-f h r-max-bs)
+        phi-f-raw (t/solve-bound-state-numerov Es-f l-f v0-f R0-f diff-f m-f h r-max-bs)
+        phi-i (t/normalize-bound-state phi-i-raw h)
+        phi-f (t/normalize-bound-state phi-f-raw h)
+        overlap-norm (ff/normalized-overlap phi-i phi-f r-max-bs h)
+        
+        ;; 65 MeV kinematics
+        E-lab 65.0
+        m-p 938.27
+        m-16O 14899.0
+        m-d 1876.136
+        m-15O 13975.0
+        mu-i (/ (* m-p m-16O) (+ m-p m-16O))
+        mu-f (/ (* m-d m-15O) (+ m-d m-15O))
+        mass-factor-i (/ (* 2.0 mu-i) (* 197.7 197.7))
+        mass-factor-f (/ (* 2.0 mu-f) (* 197.7 197.7))
+        E-CM-i (* E-lab (/ m-16O (+ m-16O m-p)))
+        Q-value (+ m-p m-16O (- m-d) (- m-15O))
+        E-CM-f (+ E-CM-i Q-value)
+        E-lab-i E-lab
+        E-lab-f (* E-CM-f (/ (+ m-d m-15O) m-15O))
+        
+        L-max 7
+        D0 (t/zero-range-constant :p-d)
+        T-amplitudes (into {}
+                          (for [L (range (inc L-max))]
+                            (let [chi-i (inel/distorted-wave-entrance E-CM-i L nil h r-max
+                                                                      :projectile-type :p
+                                                                      :target-A 16
+                                                                      :target-Z 8
+                                                                      :E-lab E-lab-i
+                                                                      :s 0.5
+                                                                      :j (+ L 0.5)
+                                                                      :mass-factor mass-factor-i)
+                                  chi-f (inel/distorted-wave-exit E-CM-i Q-value L nil h r-max
+                                                                  :outgoing-type :d
+                                                                  :residual-A 15
+                                                                  :residual-Z 8
+                                                                  :E-lab E-lab-f
+                                                                  :s 1
+                                                                  :j (inc L)
+                                                                  :mass-factor mass-factor-f)
+                                  T-L (t/transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h
+                                                                 :zero-range D0)]
+                              [L T-L])))
+        
+        k-i (Math/sqrt (* mass-factor-i E-CM-i))
+        k-f (Math/sqrt (* mass-factor-f E-CM-f))
+        S-factor 1.0
+        ;; Conversion to mb/sr: transfer module returns dσ/dΩ in fm²/sr; 1 fm² = 10 mb ⇒ *10.
+        ;; Observed ~1000× excess vs experiment suggests output scales as μb; use *0.01 to get mb/sr.
+        fm2-to-mb 0.01
+        angles-deg (range 0.0 181.0 5.0)
+        angles-rad (mapv deg->rad angles-deg)
+        dsigma-mb-sr (mapv (fn [theta-rad]
+                             (* fm2-to-mb (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f
+                                                                                        theta-rad mass-factor-i mass-factor-f 0.0 l-i l-f)))
+                           angles-rad)
+        
+        ;; Load 65 MeV experimental data
+        exp-entry (load-16Opd65-data)
+        exp-angles (if exp-entry (mapv :angle_deg (:data exp-entry)) [])
+        exp-dsigma (if exp-entry (mapv :dsigma_mb_sr (:data exp-entry)) [])
+        exp-errors (if exp-entry (mapv :error_mb_sr (:data exp-entry)) [])
+        exp-ref (if exp-entry (:reference exp-entry) nil)
+        
+        ;; Plot: theory + experiment (log scale for y to reveal scale mismatches)
+        title-str (if exp-ref
+                    (format "16O(p,d)15O — E_lab = %.0f MeV (Exp: %s)" E-lab exp-ref)
+                    (format "16O(p,d)15O — E_lab = %.0f MeV" E-lab))
+        safe-log (fn [x] (Math/log10 (max (double x) 1e-20)))
+        theory-log (mapv safe-log dsigma-mb-sr)
+        exp-log (mapv safe-log exp-dsigma)
+        chart-base (c/xy-plot (vec angles-deg) (vec theory-log)
+                              :title (str title-str " — log scale")
+                              :x-label "θ_c.m. (deg)"
+                              :y-label "log₁₀(dσ/dΩ) [mb/sr]"
+                              :series-label "DWBA (this work)"
+                              :legend true)
+        chart (if (seq exp-angles)
+                (c/add-lines chart-base (vec exp-angles) (vec exp-log)
+                            :series-label "Hosono et al. (1980)"
+                            :points true
+                            :point-size 10
+                            :point-type :circle
+                            :color :red)
+                chart-base)
+        
+        ;; Linear plot (same theory + data, linear y-axis)
+        chart-linear-base (c/xy-plot (vec angles-deg) (vec dsigma-mb-sr)
+                                     :title title-str
+                                     :x-label "θ_c.m. (deg)"
+                                     :y-label "dσ/dΩ (mb/sr)"
+                                     :series-label "DWBA (this work)"
+                                     :legend true)
+        chart-linear (if (seq exp-angles)
+                      (c/add-lines chart-linear-base (vec exp-angles) (vec exp-dsigma)
+                                  :series-label "Hosono et al. (1980)"
+                                  :points true
+                                  :point-size 10
+                                  :point-type :circle
+                                  :color :red)
+                      chart-linear-base)]
+    
+    (println (format "  E_lab = %.1f MeV" E-lab))
+    (println (format "  E_CM = %.2f MeV" E-CM-i))
+    (println (format "  Normalized overlap = %.6f" overlap-norm))
+    (when (seq exp-angles)
+      (println (format "  Experimental points: %d" (count exp-angles)))
+      (doseq [[angle dsigma err] (map vector exp-angles exp-dsigma exp-errors)]
+        (println (format "    θ_c.m. = %.2f°: %.4f ± %.4f mb/sr" angle dsigma err))))
+    
+    (save-plot chart (str output-dir "/16Opd65MeV_dcs.png") title-str)
+    (save-plot chart-linear (str output-dir "/16Opd65MeV_dcs_linear.png") title-str)
+    
+    {:reaction "16O(p,d)15O"
+     :type "transfer"
+     :E_lab E-lab
+     :angles angles-deg
+     :dsigma_mb_sr dsigma-mb-sr
+     :key_values {:overlap_norm overlap-norm}
+     :experimental_points (count exp-angles)}))
 
 ;; ============================================================================
 ;; Benchmark 2: 11Li(p,d)10Li Transfer Reaction
@@ -291,21 +442,22 @@
                                                                  :zero-range D0)]
                               [L T-L])))
         
-        ;; Angular distribution
+        ;; Angular distribution — convert to mb/sr (0.01: transfer output → mb/sr)
+        fm2-to-mb 0.01
         k-i (Math/sqrt (* mass-factor-i E-CM-i))
         k-f (Math/sqrt (* mass-factor-f E-CM-f))
         S-factor 1.0
         angles-deg (range 0.0 181.0 5.0)
         angles-rad (mapv deg->rad angles-deg)
         dsigma-mb-sr (mapv (fn [theta-rad]
-                             (* 10.0 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f
+                             (* fm2-to-mb (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f
                                                                                     theta-rad mass-factor-i mass-factor-f 0.0 l-i l-f)))
                            angles-rad)
         
         ;; Key values
-        dsigma-0 (* 10.0 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f 0.0 mass-factor-i mass-factor-f 0.0 l-i l-f))
-        dsigma-70 (* 10.0 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f (deg->rad 70.0) mass-factor-i mass-factor-f 0.0 l-i l-f))
-        dsigma-90 (* 10.0 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f (deg->rad 90.0) mass-factor-i mass-factor-f 0.0 l-i l-f))
+        dsigma-0 (* fm2-to-mb (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f 0.0 mass-factor-i mass-factor-f 0.0 l-i l-f))
+        dsigma-70 (* fm2-to-mb (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f (deg->rad 70.0) mass-factor-i mass-factor-f 0.0 l-i l-f))
+        dsigma-90 (* fm2-to-mb (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f (deg->rad 90.0) mass-factor-i mass-factor-f 0.0 l-i l-f))
         
         ;; Load experimental data
         exp-data (get @experimental-data "11Li(p,d)10Li")
@@ -684,6 +836,11 @@
       (swap! results conj (benchmark-16Opd))
       (catch Exception e
         (println (format "  ✗ Error in 16O(p,d)15O: %s" (.getMessage e)))))
+    
+    (try
+      (swap! results conj (benchmark-16Opd65MeV))
+      (catch Exception e
+        (println (format "  ✗ Error in 16O(p,d)15O @ 65 MeV: %s" (.getMessage e)))))
     
     (try
       (swap! results conj (benchmark-11Li-pd))

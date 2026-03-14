@@ -121,6 +121,19 @@ class DWBADashboard {
                 if (lambda) lambda.value = preset.lambda;
             }
         });
+
+        // Elastic target: show A/Z inputs only when Generic is selected
+        document.getElementById('elastic_target')?.addEventListener('change', () => this.toggleElasticGenericInputs());
+        this.toggleElasticGenericInputs();
+    }
+
+    toggleElasticGenericInputs() {
+        const targetEl = document.getElementById('elastic_target');
+        const show = targetEl && targetEl.value === 'generic';
+        const rowA = document.getElementById('elastic-generic-AZ-row');
+        const rowZ = document.getElementById('elastic-generic-Z-row');
+        if (rowA) rowA.style.display = show ? '' : 'none';
+        if (rowZ) rowZ.style.display = show ? '' : 'none';
     }
 
     _setButtonLoading(btnId, loading) {
@@ -197,7 +210,16 @@ class DWBADashboard {
         if (params.elastic_target !== undefined && document.getElementById('elastic_target')) {
             document.getElementById('elastic_target').value = params.elastic_target;
         }
-        
+        if (params.elastic_target_A !== undefined) {
+            const el = document.getElementById('elastic_target_A');
+            if (el) el.value = params.elastic_target_A;
+        }
+        if (params.elastic_target_Z !== undefined) {
+            const el = document.getElementById('elastic_target_Z');
+            if (el) el.value = params.elastic_target_Z;
+        }
+        this.toggleElasticGenericInputs && this.toggleElasticGenericInputs();
+
         // Update slider displays
         document.getElementById('V0-value').textContent = `${params.V0} MeV`;
         document.getElementById('R0-value').textContent = `${params.R0} fm`;
@@ -245,6 +267,8 @@ class DWBADashboard {
             inelastic_target: (document.getElementById('inelastic_target') || {}).value || '12C',
             elastic_projectile: (document.getElementById('elastic_projectile') || {}).value || 'p',
             elastic_target: (document.getElementById('elastic_target') || {}).value || '16O',
+            elastic_target_A: int('elastic_target_A', 16),
+            elastic_target_Z: int('elastic_target_Z', 8),
             // Complex Woods-Saxon for elastic (optical potential)
             W0: num('elastic_W0', 0),
             R_W: num('elastic_RW', 2.0),
