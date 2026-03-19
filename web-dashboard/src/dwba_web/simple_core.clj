@@ -4,6 +4,7 @@
             [ring.middleware.json :refer [wrap-json-body wrap-json-response]]
             [ring.middleware.cors :refer [wrap-cors]]
             [ring.util.response :refer [response content-type]]
+            [cheshire.core :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [functions :as phys]           ;; use core calculations from main project
@@ -134,8 +135,8 @@
           S-factor 1.0
           E-default 20.0
           angles-deg (range 20.0 181.0 20.0)]
-      (let [;; 1 mb = 10 fm² => dσ/dΩ (mb/sr) = dσ/dΩ (fm²/sr) / 10
-            fm2->mb 0.1
+      (let [;; Transfer module output → mb/sr (use 0.01 to match paper/experiment scale)
+            fm2->mb 0.01
             transfer-vec (vec (for [theta-deg angles-deg]
                                 (let [theta-rad (* theta-deg (/ Math/PI 180.0))
                                       dsigma-fm2 (t T-amplitudes S-factor k-i k-f theta-rad
@@ -191,7 +192,34 @@
   (let [toks (filter (fn [x] (not (str/blank? (str x)))) (tokens-from xs))
         parsed (mapv safe-parse-int toks)]
     (vec (remove nil? parsed))))
-(defn- params [req] (or (:body req) (:params req) {}))
+(defn- normalize-keys
+  "Normalize top-level map keys to keywords."
+  [m]
+  (if (map? m)
+    (into {}
+          (for [[k v] m]
+            [(if (keyword? k) k (keyword (str k))) v]))
+    {}))
+
+(defn- parse-json-body
+  "Parse a JSON string into a map with keyword keys."
+  [s]
+  (try
+    (normalize-keys (json/parse-string (str s) true))
+    (catch Exception _ {})))
+
+(defn- params [req]
+  "Get request params/body robustly for JSON and form posts."
+  (let [b (:body req)
+        p (:params req)
+        p-map (if (map? p) (normalize-keys p) {})
+        b-map (cond
+                (map? b) (normalize-keys b)
+                (string? b) (parse-json-body b)
+                (instance? java.io.InputStream b) (parse-json-body (slurp b))
+                :else {})]
+    ;; Body values override query/form params when both are present.
+    (merge p-map b-map)))
 
 (defn- parse-double-default
   "Parse v as double; if nil or blank, return default."
@@ -291,16 +319,33 @@
           elastic-target-A (when (= (str elastic-target) "generic")
                             (let [v (parse-int-default (:elastic_target_A p) 16)] (when (and (number? v) (>= v 1) (<= v 300)) v)))
           elastic-target-Z (when (= (str elastic-target) "generic")
-                            (let [v (parse-int-default (:elastic_target_Z p) 8)] (when (and (number? v) (>= v 0) (<= v 120)) v)))]
+                            (let [v (parse-int-default (:elastic_target_Z p) 8)] (when (and (number? v) (>= v 0) (<= v 120)) v)))
+          [target-A target-Z] (case (str elastic-target)
+                                "12C" [12 6]
+                                "16O" [16 8]
+                                [(or elastic-target-A 16) (or elastic-target-Z 8)])
+          [proj-mass proj-Z] (case (str elastic-projectile)
+                               "n" [939.565 0]
+                               "d" [1875.613 1]
+                               "a" [3727.379 2]
+                               [938.272 1])
+          target-mass (* 931.5 target-A)
+          mu (/ (* proj-mass target-mass) (+ proj-mass target-mass))
+          mass-factor-elastic (/ (* 2.0 mu) (* 197.327 197.327))
+          z1z2ee (* proj-Z target-Z 1.44)]
       (let [dsigma-fn (or (resolve 'functions/differential-cross-section) (do (require 'functions) (resolve 'functions/differential-cross-section)))
             L-max (apply max L-values)
-            ;; Elastic dσ/dΩ: currently uses real Woods-Saxon (functions/differential-cross-section).
-            ;; When ws-w is present, we still use real for now; complex optical elastic can be added later.
+            ;; Elastic dσ/dΩ in mb/sr (functions returns fm²/sr; 1 fm² = 10 mb)
+            fm2->mb 10.0
             elastic-data (for [E energies theta angles]
                            (let [theta-rad (* theta (/ Math/PI 180.0))
-                                 dsigma-complex (if dsigma-fn (dsigma-fn E ws theta-rad L-max) 0.0)
-                                 dsigma (if (number? dsigma-complex) dsigma-complex (c/mag dsigma-complex))]
-                             {:energy E :angle theta :differential_cross_section dsigma}))]
+                                 dsigma-complex (if dsigma-fn
+                                                  (binding [phys/mass-factor mass-factor-elastic
+                                                            phys/Z1Z2ee z1z2ee]
+                                                    (dsigma-fn E ws theta-rad L-max))
+                                                  0.0)
+                                 dsigma-fm2 (if (number? dsigma-complex) dsigma-complex (c/mag dsigma-complex))]
+                             {:energy E :angle theta :differential_cross_section (* fm2->mb dsigma-fm2)}))]
         (response {:success true
                    :data {:elastic elastic-data
                           :parameters (merge {:energies energies
@@ -325,15 +370,56 @@
           [energies L-values] (ensure-energies-L (parse-doubles (:energies p)) (parse-ints (:L_values p)))
           lambdas (parse-lambdas p)
           ws (ws-params-from p)
+          projectile-str (str (or (:projectile p) "p"))
+          target-str (str (or (:inelastic_target p) "12C"))
+          projectile-type (case projectile-str
+                            "p" :p
+                            "n" :n
+                            "d" :d
+                            "a" :alpha
+                            :p)
+          spin (if (= projectile-type :d) 1.0 0.5)
+          [target-A target-Z] (case target-str
+                                "16O" [16 8]
+                                "12C" [12 6]
+                                [12 6])
           E-ex (parse-double-default (:E_ex p) 4.44)
           beta (parse-double-default (:beta p) 0.25)
-          h 0.02, r-max 15.0, mu 0, mass-factor phys/mass-factor
+          projectile-mass-MeV (case projectile-type
+                                :p 938.272
+                                :n 939.565
+                                :d 1875.613
+                                :alpha 3727.379
+                                938.272)
+          target-mass-MeV (* 931.5 target-A)
+          mu (/ (* projectile-mass-MeV target-mass-MeV)
+                (+ projectile-mass-MeV target-mass-MeV))
+          mass-factor (/ (* 2.0 mu) (* 197.327 197.327))
+          h 0.02, r-max 15.0
           n-points (int (/ r-max h))
           transition-form-factor-fn (or (resolve 'dwba.inelastic/transition-form-factor) (do (require 'dwba.inelastic) (resolve 'dwba.inelastic/transition-form-factor)))
           inelastic-amplitude-radial-fn (or (resolve 'dwba.inelastic/inelastic-amplitude-radial) (do (require 'dwba.inelastic) (resolve 'dwba.inelastic/inelastic-amplitude-radial)))
           inelastic-dsigma-fn (or (resolve 'dwba.inelastic/inelastic-differential-cross-section) (do (require 'dwba.inelastic) (resolve 'dwba.inelastic/inelastic-differential-cross-section)))
           angular-factor (* 4.0 Math/PI)
-          zero-complex (c/complex-cartesian 0.0 0.0)]
+          zero-complex (c/complex-cartesian 0.0 0.0)
+          entrance-wave (fn [E-i L-i]
+                          (inel E-i L-i nil h r-max
+                                :projectile-type projectile-type
+                                :target-A target-A
+                                :target-Z target-Z
+                                :E-lab E-i
+                                :s spin
+                                :j (+ L-i spin)
+                                :mass-factor mass-factor))
+          exit-wave (fn [E-i L-i]
+                      (inel-exit E-i E-ex L-i nil h r-max
+                                 :outgoing-type projectile-type
+                                 :residual-A target-A
+                                 :residual-Z target-Z
+                                 :E-lab (max 0.001 (- E-i E-ex))
+                                 :s spin
+                                 :j (+ L-i spin)
+                                 :mass-factor mass-factor))]
         (let [inelastic-data (for [lambda lambdas
                                   E-i    energies]
                                (try
@@ -341,8 +427,8 @@
                                                           (mapv (fn [i] (transition-form-factor-fn (* i h) lambda beta ws)) (range n-points)))
                                        T-sum (if (and V-transition-vec inelastic-amplitude-radial-fn)
                                                (reduce (fn [acc L-i]
-                                                         (let [chi-i (inel E-i L-i ws h r-max)
-                                                               chi-f (inel-exit E-i E-ex L-i ws h r-max)
+                                                         (let [chi-i (entrance-wave E-i L-i)
+                                                               chi-f (exit-wave E-i L-i)
                                                                T-radial (inelastic-amplitude-radial-fn chi-i chi-f V-transition-vec r-max h)
                                                                T-L (if (number? T-radial) (* angular-factor T-radial) (c/mul angular-factor T-radial))]
                                                            (c/add acc (if (number? T-L) (c/complex-cartesian T-L 0.0) T-L))))
@@ -355,13 +441,14 @@
                                                           k-f (Math/sqrt (* mass-factor E-f))]
                                                       (inelastic-dsigma-fn T-sum k-i k-f E-i E-ex mass-factor))
                                                     (reduce + 0.0 (for [L-i L-values]
-                                                                    (inel-cross (inel E-i L-i ws h r-max) (inel-exit E-i E-ex L-i ws h r-max)
+                                                                    (inel-cross (entrance-wave E-i L-i) (exit-wave E-i L-i)
                                                                                 lambda mu beta ws E-i E-ex r-max h mass-factor))))
-                                       ;; 1 mb = 10 fm² => dσ/dΩ (mb/sr) = dσ/dΩ (fm²/sr) * 0.1
-                                       dsigma-mb (* 0.1 dsigma-fm2)]
+                                       ;; 1 fm² = 10 mb => dσ/dΩ (mb/sr) = dσ/dΩ (fm²/sr) * 10
+                                       dsigma-mb (* 10.0 dsigma-fm2)]
                                    {:energy E-i :lambda lambda :excitation_energy E-ex :differential_cross_section dsigma-mb})
                                  (catch Exception e {:energy E-i :lambda lambda :excitation_energy E-ex :differential_cross_section 0.0 :error (.getMessage e)})))]
-          (response {:success true :data {:inelastic inelastic-data :parameters {:energies energies :L_values L-values :lambdas lambdas :ws_params ws :E_ex E-ex :beta beta :h h :r_max r-max}}})))
+          (response {:success true :data {:inelastic inelastic-data :parameters {:energies energies :L_values L-values :lambdas lambdas :ws_params ws :E_ex E-ex :beta beta :h h :r_max r-max
+                                                                                  :projectile projectile-str :inelastic_target target-str}}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
 (defn- handle-api-transfer [req]
@@ -386,8 +473,8 @@
           overlap-approx (normalized-overlap phi-i phi-f r-max h)
           D0 (zero-range-const reaction-type)
           angles-deg (range 20.0 181.0 20.0)]
-      ;; DCS vs. angle: 20°–160° step 20° (exclude 0°, 90°, 180°); output in mb/sr (1 mb = 10 fm²)
-      (let [fm2->mb 0.1
+      ;; DCS vs. angle in mb/sr (transfer output scaled by 0.01 for mb/sr)
+      (let [fm2->mb 0.01
             transfer-data (for [E-i energies
                                theta-deg angles-deg]
                            (try
@@ -414,10 +501,10 @@
 ;; ---------------------------
 (defn- route-list []
   (list
-    (POST "/api/calculate" [req] (handle-api-calculate req))
-    (POST "/api/elastic" [req] (handle-api-elastic req))
-    (POST "/api/inelastic" [req] (handle-api-inelastic req))
-    (POST "/api/transfer" [req] (handle-api-transfer req))
+    (POST "/api/calculate" req (handle-api-calculate req))
+    (POST "/api/elastic" req (handle-api-elastic req))
+    (POST "/api/inelastic" req (handle-api-inelastic req))
+    (POST "/api/transfer" req (handle-api-transfer req))
     (GET "/" [] (serve-index))
     (GET "/app.js" [] (serve-resource "app.js"))
     (GET "/js/dashboard.js" [] (serve-resource "js/dashboard.js"))
@@ -430,7 +517,7 @@
                                                             :a0 {:min 0.1 :max 2.0 :step 0.1} :radius {:min 1.0 :max 10.0 :step 0.1}
                                                             :W0 {:min 0.0 :max 50.0 :step 0.5} :R_W {:min 0.5 :max 6.0 :step 0.1} :a_W {:min 0.1 :max 2.0 :step 0.1}
                                                             :E_ex {:min 0.0 :max 20.0 :step 0.1} :lambda {:min 1 :max 5 :step 1} :beta {:min 0.0 :max 1.0 :step 0.01}}}))
-    (GET "/api/transfer-default" [req] (handle-transfer-default req))
+    (GET "/api/transfer-default" req (handle-transfer-default req))
     (OPTIONS "/api/health" [] (response nil))
     (OPTIONS "/api/calculate" [] (response nil))
     (OPTIONS "/api/parameters" [] (response nil))

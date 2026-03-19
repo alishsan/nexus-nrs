@@ -736,7 +736,7 @@ class DWBADashboard {
         const layout = {
             title: 'Elastic Scattering Differential Cross-Section',
             xaxis: { title: 'Scattering Angle (degrees)', gridcolor: '#e0e0e0' },
-            yaxis: { title: 'dσ/dΩ (fm²/sr)', type: 'log', gridcolor: '#e0e0e0' },
+            yaxis: { title: 'dσ/dΩ (mb/sr)', type: 'log', gridcolor: '#e0e0e0' },
             plot_bgcolor: 'rgba(0,0,0,0)',
             paper_bgcolor: 'rgba(0,0,0,0)',
             font: { family: 'Arial, sans-serif' },
