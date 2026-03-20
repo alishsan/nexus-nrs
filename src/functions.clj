@@ -860,10 +860,15 @@ precision 0.00001]
     (c/div (c/subt2 (Hankel- L eta rho) (c/mul rho R (deriv Hankel- L eta rho 0.0000001)))
            (c/subt2 (Hankel+ L eta rho) (c/mul rho R (deriv Hankel+ L eta rho 0.0000001))))))
 
-(def ^:private s-matrix-3 (memoize s-matrix-3-impl))
+;; Cache must include mass-factor and Z1Z2ee: they affect r-matrix, k, eta, rho, and Hankel matching.
+;; Otherwise (e.g. dashboard elastic) first projectile/target poisons the cache and only overall scale changes.
+(def ^:private s-matrix-3-memo
+  (memoize (fn [[E V L mf z12]]
+             (binding [mass-factor (double mf) Z1Z2ee (double z12)]
+               (s-matrix-3-impl E V L)))))
 
 (defn s-matrix ([^double E V ^long L]
-                (s-matrix-3 E (vec V) L))
+                (s-matrix-3-memo [E (vec V) L mass-factor Z1Z2ee]))
 
  ([^double E V ^double a ^long L]
                 (let [
