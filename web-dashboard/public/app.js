@@ -268,6 +268,32 @@ class DWBADashboard {
         document.getElementById('R0-value').textContent = `${params.R0} fm`;
         document.getElementById('a0-value').textContent = `${params.a0} fm`;
         document.getElementById('radius-value').textContent = `${params.radius} fm`;
+
+        // Transfer-tab defaults (optional keys from /api/parameters)
+        const setIf = (id, v) => {
+            const el = document.getElementById(id);
+            if (el && v !== undefined && v !== null) el.value = v;
+        };
+        setIf('transfer_V0', params.V0);
+        setIf('transfer_R0', params.R0);
+        setIf('transfer_a0', params.a0);
+        setIf('transfer_W0', params.transfer_W0);
+        setIf('transfer_RW', params.transfer_RW ?? params.R_W);
+        setIf('transfer_aW', params.transfer_aW ?? params.a_W);
+        setIf('transfer_r_max', params.transfer_r_max);
+        setIf('transfer_h', params.transfer_h);
+        setIf('transfer_S', params.transfer_S);
+        setIf('transfer_partial_L', params.transfer_partial_L);
+        setIf('transfer_l_i', params.transfer_l_i);
+        setIf('transfer_l_f', params.transfer_l_f);
+        if (params.transfer_energies !== undefined) {
+            const te = document.getElementById('transfer_energies');
+            if (te) te.value = Array.isArray(params.transfer_energies) ? params.transfer_energies.join(',') : String(params.transfer_energies);
+        }
+        if (params.transfer_L_values !== undefined) {
+            const tl = document.getElementById('transfer_L_values');
+            if (tl) tl.value = Array.isArray(params.transfer_L_values) ? params.transfer_L_values.join(',') : String(params.transfer_L_values);
+        }
     }
 
     getParameters() {
@@ -315,7 +341,22 @@ class DWBADashboard {
             // Complex Woods-Saxon for elastic (optical potential)
             W0: num('elastic_W0', 0),
             R_W: num('elastic_RW', 2.0),
-            a_W: num('elastic_aW', 0.6)
+            a_W: num('elastic_aW', 0.6),
+            // Transfer tab (POST /api/transfer)
+            transfer_energies: ((document.getElementById('transfer_energies') || {}).value || '').trim(),
+            transfer_L_values: (document.getElementById('transfer_L_values') || {}).value || '1',
+            transfer_S: num('transfer_S', 1),
+            transfer_partial_L: int('transfer_partial_L', 1),
+            transfer_l_i: int('transfer_l_i', 1),
+            transfer_l_f: int('transfer_l_f', 0),
+            transfer_V0: num('transfer_V0', 40),
+            transfer_R0: num('transfer_R0', 2),
+            transfer_a0: num('transfer_a0', 0.6),
+            transfer_W0: num('transfer_W0', 0),
+            transfer_RW: num('transfer_RW', 2),
+            transfer_aW: num('transfer_aW', 0.6),
+            transfer_r_max: num('transfer_r_max', 20),
+            transfer_h: num('transfer_h', 0.01)
         };
     }
 
@@ -483,7 +524,48 @@ class DWBADashboard {
         }
     }
     async calculateInelastic() { await this._runTabCalculation('calculate-inelastic-btn', '/api/inelastic', 'inelastic'); }
-    async calculateTransfer() { await this._runTabCalculation('calculate-transfer-btn', '/api/transfer', 'transfer'); }
+
+    /** Transfer: prefer energies / L from this tab; fall back to main panel; default energy 20 MeV if both empty. */
+    async calculateTransfer() {
+        const tE = (document.getElementById('transfer_energies')?.value || '').trim();
+        const mainE = (document.getElementById('energy-range')?.value || '').trim();
+        const energiesStr = tE || mainE || '20';
+        const tL = (document.getElementById('transfer_L_values')?.value || '').trim();
+        const mainL = (document.getElementById('L-values')?.value || '').trim();
+        const LValuesStr = tL || mainL || '1';
+        const params = { ...this.getParameters(), energies: energiesStr, L_values: LValuesStr };
+        if (tE) params.transfer_energies = tE;
+
+        this._setButtonLoading('calculate-transfer-btn', true);
+        this.showStatus('Calculating transfer...', 'info');
+        const startTime = Date.now();
+        try {
+            const result = await this._post('/api/transfer', params);
+            if (!result.success) throw new Error(result.error || 'Calculation failed');
+            this.currentData = this.currentData || {};
+            const raw = result.data && (result.data.transfer || result.data['transfer']);
+            if (raw) this.currentData.transfer = raw;
+            const lab = result.data?.parameters?.reaction_type;
+            const s = result.data?.parameters?.S_factor;
+            const lbl = document.getElementById('transfer-default-label');
+            if (lbl && lab != null && s != null) {
+                lbl.textContent = `${lab}, S=${s} (calculated)`;
+            }
+            this.updateAllPlots();
+            this.showStatus(`Transfer done in ${Date.now() - startTime}ms`, 'success');
+        } catch (error) {
+            console.error('Calculation error:', error);
+            let msg = error.message;
+            if (msg.includes('404')) {
+                msg = this.apiBase === 'http://localhost:3000'
+                    ? 'API not found. Start the server: cd web-dashboard && lein run — then open http://localhost:3000 in your browser (click the link above).'
+                    : 'API not found. The server may be starting or temporarily unavailable.';
+            }
+            this.showStatus(`Error: ${msg}`, 'error');
+        } finally {
+            this._setButtonLoading('calculate-transfer-btn', false);
+        }
+    }
 
     updateAllPlots() {
         if (!this.currentData) return;

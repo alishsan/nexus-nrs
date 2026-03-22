@@ -9,6 +9,7 @@
             [functions :refer :all]
             [dwba.finite-well :refer :all]
             [dwba.form-factors :as ff]
+            [dwba.angular-momentum :as jam]
             [complex :refer :all]))
 
 ;; ============================================================================
@@ -1819,6 +1820,8 @@
          k-f (Math/sqrt (* mass-factor-f 8.0))
          S 0.5]
      (transfer-differential-cross-section-angular T-map S k-i k-f (/ Math/PI 2) mass-factor-i mass-factor-f))"
+  ([T-amplitudes S-factor k-i k-f theta mass-factor]
+   (transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f theta mass-factor mass-factor))
   ([T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f]
    (transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f 0.0 nil nil))
   ([T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f phi]
@@ -1834,6 +1837,58 @@
          ;; Multiply all factors: (μ_i μ_f/(2πħ²)²) · (k_f/k_i) · angular_dist · S
          dsigma (* prefactor k-ratio angular-dist S-factor)]
      dsigma)))
+
+;; -----------------------------------------------------------------------------
+;; Nuclear spin / j-coupling for single-nucleon transfer (optional on top of |T|² × S)
+;; -----------------------------------------------------------------------------
+
+(defn transfer-nuclear-spin-statistical-factor
+  "Unpolarized target + unpolarized residual m-average/sum: (2J_f+1)/(2J_i+1).
+  J_i, J_f are total angular momenta of initial and final nuclei (integer or half-integer)."
+  [J-i J-f]
+  (/ (+ (* 2.0 (double J-f)) 1.0) (+ (* 2.0 (double J-i)) 1.0)))
+
+(defn transfer-unpolarized-deuteron-spin-factor
+  "Spin average for an unpolarized deuteron beam: 1/3."
+  []
+  (/ 1.0 3.0))
+
+(defn transfer-one-nucleon-recoupling-6j
+  "Wigner 6j factor {J_i J_f j; l ½ j} for coupling core spins to the transferred
+  nucleon's (l,½)j single-particle state (stripping/pickup). Returns 0 if triads fail.
+  Uses exact 6j from dwba.angular-momentum."
+  [J-i J-f l j]
+  (jam/wigner-6j J-i J-f j l 0.5 j))
+
+(defn transfer-one-nucleon-spin-prefactor
+  "Dimensionless multiplier for dσ/dΩ when folding in nuclear spins (multiply after
+  the usual kinematic × |T(θ)|² × S from transfer-differential-cross-section-angular).
+
+  Combines:
+    • (2J_f+1)/(2J_i+1) — initial/final spin statistical factor
+    • 1/3 if :deuteron-unpolarized? true (default) — unpolarized deuteron entrance
+    • (2j+1) × {J_i J_f j; l ½ j}² — lsj recoupling (nucleon spin ½)
+
+  Convention note: some works absorb (2j+1) or pieces of the 6j² into the definition of
+  the spectroscopic factor C²S; compare your S before interpreting absolute scale.
+
+  opts: :deuteron-unpolarized? (default true)."
+  [J-i J-f l j & {:keys [deuteron-unpolarized?] :or {deuteron-unpolarized? true}}]
+  (let [stat (transfer-nuclear-spin-statistical-factor J-i J-f)
+        d-fac (if deuteron-unpolarized? (transfer-unpolarized-deuteron-spin-factor) 1.0)
+        sixj (transfer-one-nucleon-recoupling-6j J-i J-f l j)
+        rec (* (inc (* 2.0 (double j))) (* sixj sixj))]
+    (* stat d-fac rec)))
+
+(defn transfer-differential-cross-section-angular-with-spin
+  "Same as transfer-differential-cross-section-angular, multiplied by
+  transfer-one-nucleon-spin-prefactor for target/residual spins J_i, J_f, bound orbital
+  l and total single-particle j of the transferred nucleon. Pass optional kwargs for
+  transfer-one-nucleon-spin-prefactor (e.g. :deuteron-unpolarized? false)."
+  [T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f phi l-i l-f J-i J-f l j & opts]
+  (* (transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f theta
+                                                 mass-factor-i mass-factor-f phi l-i l-f)
+     (double (apply transfer-one-nucleon-spin-prefactor J-i J-f l j opts))))
 
 (defn transfer-total-cross-section
   "Calculate total cross-section by integrating differential cross-section.

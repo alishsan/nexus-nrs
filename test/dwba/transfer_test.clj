@@ -343,6 +343,27 @@
       (let [unique-values (distinct [dsigma-pi6 dsigma-pi4 dsigma-pi3 dsigma-pi2])]
         (is (>= (count unique-values) 1) "Should have variation (at least one unique value)")))))
 
+(deftest transfer-nuclear-spin-api-test
+  (testing "statistical factor and deuteron spin average"
+    (is (== 2.0 (t/transfer-nuclear-spin-statistical-factor 0.5 1.5)))
+    (is (== (/ 1.0 3.0) (t/transfer-unpolarized-deuteron-spin-factor))))
+  (testing "recoupling 6j and spin prefactor are finite (s1/2-like: J_i=0, J_f=½, l=0, j=½)"
+    (let [sixj (t/transfer-one-nucleon-recoupling-6j 0 0.5 0 0.5)
+          pref (t/transfer-one-nucleon-spin-prefactor 0 0.5 0 0.5)]
+      (is (number? sixj))
+      (is (not (Double/isNaN sixj)))
+      (is (number? pref))
+      (is (not (Double/isNaN pref)))
+      (is (pos? pref))))
+  (testing "with-spin equals base × prefactor"
+    (let [T {0 1.0}
+          S 1.0
+          ki 0.5 kf 0.4 th (/ Math/PI 3)
+          mf 20.0
+          base (t/transfer-differential-cross-section-angular T S ki kf th mf mf 0.0 0 0)
+          full (t/transfer-differential-cross-section-angular-with-spin T S ki kf th mf mf 0.0 0 0 0 0.5 0 0.5)]
+      (is (< (Math/abs (- full (* base (t/transfer-one-nucleon-spin-prefactor 0 0.5 0 0.5)))) 1e-9)))))
+
 (deftest transfer-total-cross-section-basic-test
   (testing "Transfer total cross-section basic calculation"
     (let [T-amplitudes {0 1.0, 1 0.5}

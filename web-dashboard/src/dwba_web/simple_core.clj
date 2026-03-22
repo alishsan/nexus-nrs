@@ -246,6 +246,25 @@
     (when (and (number? W0) (> W0 0.0))
       [W0 R-W a-W])))
 
+(defn- transfer-ws-from [params]
+  "Woods–Saxon [V0 R0 a0] for transfer bound states. transfer_V0 / transfer_R0 / transfer_a0
+  override main panel V0/R0/a0 when sent (defaults fall back to global ws-params-from)."
+  (let [base (ws-params-from params)]
+    [(parse-double-default (:transfer_V0 params) (nth base 0))
+     (parse-double-default (:transfer_R0 params) (nth base 1))
+     (parse-double-default (:transfer_a0 params) (nth base 2))]))
+
+(defn- transfer-energies-from [params]
+  "If :transfer_energies is non-empty, return parsed MeV list; else nil (caller uses :energies)."
+  (let [te (parse-doubles (:transfer_energies params))]
+    (when (seq te) te)))
+
+(defn- transfer-optical-imag-params [params]
+  "Imaginary volume optical parameters from transfer tab (echoed in API; schematic zero-range path is real kinematics only)."
+  {:W0 (parse-double-default (:transfer_W0 params) 0.0)
+   :R_W (parse-double-default (:transfer_RW params) (parse-double-default (:R_W params) 2.0))
+   :a_W (parse-double-default (:transfer_aW params) (parse-double-default (:a_W params) 0.6))})
+
 (def ^:private default-energies [5.0 10.0 15.0 20.0 25.0])
 (def ^:private default-L-values [0 1 2 3 4 5])
 
@@ -474,13 +493,20 @@
           solve-bound-state (or (resolve 'dwba.transfer/solve-bound-state) (do (require 'dwba.transfer) (resolve 'dwba.transfer/solve-bound-state)))
           normalized-overlap (or (resolve 'dwba.form-factors/normalized-overlap) (do (require 'dwba.form-factors) (resolve 'dwba.form-factors/normalized-overlap)))
           p (params req)
-          [energies L-values] (ensure-energies-L (parse-doubles (:energies p)) (parse-ints (:L_values p)))
-          ws (ws-params-from p)
+          energy-list (or (transfer-energies-from p) (parse-doubles (:energies p)))
+          [energies L-values] (ensure-energies-L energy-list (parse-ints (:L_values p)))
+          ws (transfer-ws-from p)
+          optical (transfer-optical-imag-params p)
           reaction-type (keyword (str (or (when-not (str/blank? (str (:reaction_type p))) (:reaction_type p)) "p-d")))
-          S-factor 1.0, mass-factor phys/mass-factor, h 0.01, r-max 20.0
-          l-i 1, l-f 0
-          bound-i (solve-bound-state ws 1 1 nil r-max h)
-          bound-f (solve-bound-state ws 1 0 nil r-max h)
+          S-factor (parse-double-default (or (:transfer_S p) (:S_factor p)) 1.0)
+          mass-factor phys/mass-factor
+          h (parse-double-default (:transfer_h p) 0.01)
+          r-max (parse-double-default (:transfer_r_max p) 20.0)
+          l-i (parse-int-default (:transfer_l_i p) 1)
+          l-f (parse-int-default (:transfer_l_f p) 0)
+          L-partial (parse-int-default (:transfer_partial_L p) 1)
+          bound-i (solve-bound-state ws 1 l-i nil r-max h)
+          bound-f (solve-bound-state ws 1 l-f nil r-max h)
           phi-i (:normalized-wavefunction bound-i)
           phi-f (:normalized-wavefunction bound-f)
           overlap-approx (normalized-overlap phi-i phi-f r-max h)
@@ -495,14 +521,22 @@
                                    k-i (Math/sqrt (* mass-factor E-i))
                                    k-f (Math/sqrt (* mass-factor E-f-approx))
                                    T (transfer-amp overlap-approx D0)
-                                   ;; (p,d) l-i=1 l-f=0 → only L=1
-                                   T-amplitudes {1 T}
+                                   T-amplitudes {L-partial T}
                                    theta-rad (* theta-deg (/ Math/PI 180.0))
                                    dsigma-fm2 (transfer-dsigma-angular T-amplitudes S-factor k-i k-f theta-rad
                                                                        mass-factor mass-factor 0.0 l-i l-f)]
                                {:energy E-i :angle theta-deg :differential_cross_section (* fm2->mb dsigma-fm2)})
                              (catch Exception e {:energy E-i :angle theta-deg :differential_cross_section 0.0 :error (.getMessage e)})))]
-        (response {:success true :data {:transfer transfer-data :parameters {:energies energies :L_values L-values :ws_params ws :reaction_type (str reaction-type) :S_factor S-factor}}})))
+        (response {:success true :data {:transfer transfer-data
+                                        :parameters {:energies energies :L_values L-values
+                                                     :ws_params ws :bound_state_ws ws
+                                                     :reaction_type (str reaction-type)
+                                                     :S_factor S-factor
+                                                     :target (str (or (:target p) ""))
+                                                     :r_max r-max :h h
+                                                     :transfer_l_i l-i :transfer_l_f l-f
+                                                     :transfer_partial_L L-partial
+                                                     :optical_imaginary optical}}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
 (defn- handle-transfer-default [req]
@@ -525,7 +559,10 @@
     (GET "/api/parameters" [] (response {:default_parameters {:energies [5.0 10.0 15.0 20.0 25.0] :L_values [0 1 2 3 4 5]
                                                                :V0 40.0 :R0 2.0 :a0 0.6 :radius 3.0
                                                                :W0 0.0 :R_W 2.0 :a_W 0.6
-                                                               :E_ex 4.44 :lambda 2 :beta 0.25 :reaction_type "p-d"}
+                                                               :E_ex 4.44 :lambda 2 :beta 0.25 :reaction_type "p-d"
+                                                               :transfer_S 1.0 :transfer_partial_L 1 :transfer_l_i 1 :transfer_l_f 0
+                                                               :transfer_r_max 20.0 :transfer_h 0.01
+                                                               :transfer_W0 0.0 :transfer_RW 2.0 :transfer_aW 0.6}
                                          :parameter_ranges {:V0 {:min -100.0 :max 100.0 :step 1.0} :R0 {:min 0.5 :max 10.0 :step 0.1}
                                                             :a0 {:min 0.1 :max 2.0 :step 0.1} :radius {:min 1.0 :max 30.0 :step 0.1}
                                                             :W0 {:min 0.0 :max 50.0 :step 0.5} :R_W {:min 0.5 :max 6.0 :step 0.1} :a_W {:min 0.1 :max 2.0 :step 0.1}

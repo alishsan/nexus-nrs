@@ -57,6 +57,22 @@
             padding: 12px 15px;
             transition: all 0.3s ease;
         }
+        .transfer-param-box {
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 1rem 1.1rem;
+            background: #fafbfc;
+            height: 100%;
+        }
+        .transfer-param-box h6 {
+            color: #495057;
+            font-weight: 600;
+            margin-bottom: 0.85rem;
+            font-size: 0.95rem;
+        }
+        .transfer-param-box .parameter-group label {
+            font-size: 0.9rem;
+        }
         .form-control:focus, .form-select:focus {
             border-color: #667eea;
             box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
@@ -491,7 +507,131 @@
                                 </div>
                             </div>
                         </div>
+                        <p class="text-muted small mb-0">Use the boxes below for transfer-specific kinematics, bound-state well, optical (imaginary) terms, and radial mesh. Leave energies blank on this tab to use the main <strong>Energy range</strong> field.</p>
                     </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-lg-6">
+                            <div class="transfer-param-box">
+                                <h6><i class="fas fa-tachometer-alt"></i> Kinematics &amp; coupling</h6>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="parameter-group">
+                                            <label for="transfer_energies">Beam energies (MeV)</label>
+                                            <input type="text" class="form-control" id="transfer_energies" placeholder="e.g. 15,20,25 (empty = main panel)">
+                                            <small class="text-muted">Comma-separated lab energies</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="parameter-group">
+                                            <label for="transfer_L_values">Partial waves <em>L</em></label>
+                                            <input type="text" class="form-control" id="transfer_L_values" value="1" placeholder="1">
+                                            <small class="text-muted">Default 1 for schematic (p,d)</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="parameter-group">
+                                            <label for="transfer_S">Spectroscopic factor <em>S</em></label>
+                                            <input type="number" class="form-control" id="transfer_S" value="1" step="0.05" min="0">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="parameter-group">
+                                            <label for="transfer_partial_L"><em>L</em> in |T<sub>L</sub>|² map</label>
+                                            <input type="number" class="form-control" id="transfer_partial_L" value="1" min="0" max="20" step="1">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <div class="parameter-group">
+                                            <label for="transfer_l_i"><em>l</em><sub>i</sub></label>
+                                            <input type="number" class="form-control" id="transfer_l_i" value="1" min="0" max="10" step="1">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <div class="parameter-group">
+                                            <label for="transfer_l_f"><em>l</em><sub>f</sub></label>
+                                            <input type="number" class="form-control" id="transfer_l_f" value="0" min="0" max="10" step="1">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="transfer-param-box">
+                                <h6><i class="fas fa-mountain"></i> Bound state (real Woods–Saxon)</h6>
+                                <p class="small text-muted mb-2">Well for overlap / bound orbits (defaults track main panel V₀, R₀, a₀ if you sync sliders).</p>
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="parameter-group">
+                                            <label for="transfer_V0">Depth V₀ (MeV)</label>
+                                            <input type="number" class="form-control" id="transfer_V0" value="40" step="0.5">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="parameter-group">
+                                            <label for="transfer_R0">Radius R₀ (fm)</label>
+                                            <input type="number" class="form-control" id="transfer_R0" value="2" step="0.05" min="0.5">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="parameter-group">
+                                            <label for="transfer_a0">Diffuseness a₀ (fm)</label>
+                                            <input type="number" class="form-control" id="transfer_a0" value="0.6" step="0.05" min="0.1">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-lg-6">
+                            <div class="transfer-param-box">
+                                <h6><i class="fas fa-eye-slash"></i> Optical model (imaginary volume)</h6>
+                                <p class="small text-muted mb-2">Recorded in API response for your notes; the current schematic zero-range transfer uses real kinematics only (absorption not yet folded into this path).</p>
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="parameter-group">
+                                            <label for="transfer_W0">W₀ (MeV)</label>
+                                            <input type="number" class="form-control" id="transfer_W0" value="0" min="0" max="80" step="0.5" placeholder="0">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="parameter-group">
+                                            <label for="transfer_RW">R<sub>W</sub> (fm)</label>
+                                            <input type="number" class="form-control" id="transfer_RW" value="2" step="0.05" min="0.5">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="parameter-group">
+                                            <label for="transfer_aW">a<sub>W</sub> (fm)</label>
+                                            <input type="number" class="form-control" id="transfer_aW" value="0.6" step="0.05" min="0.1">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="transfer-param-box">
+                                <h6><i class="fas fa-ruler-combined"></i> Radial mesh</h6>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="parameter-group">
+                                            <label for="transfer_r_max"><em>r</em><sub>max</sub> (fm)</label>
+                                            <input type="number" class="form-control" id="transfer_r_max" value="20" step="0.5" min="5">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="parameter-group">
+                                            <label for="transfer_h">Step <em>h</em> (fm)</label>
+                                            <input type="number" class="form-control" id="transfer_h" value="0.01" step="0.005" min="0.005">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="mb-3">
                         <button class="btn btn-calculate" id="calculate-transfer-btn" type="button">
                             <i class="fas fa-calculator"></i> Calculate
