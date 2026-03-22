@@ -819,6 +819,42 @@ precision 0.00001]
   ( hypergeometric-complex-U a (* 2 (inc L)) (c/complex-cartesian 0 (* 2.0 rho)))
 )))
 
+(def ^:dynamic *elastic-imag-ws-params*
+  "When bound to [W0 R_W a_W] (W0 > 0), elastic s-matrix uses V(r)=V_C+V_real WS - i W0 f_W(r).
+   Nil = real potential only (default).")
+
+(defn r-matrix-complex-imag-ws
+  "Same matching radius and stepping as 4-arg r-matrix, but complex u for imaginary Woods-Saxon absorption.
+   W-vec is [W0 R_W a_W]. Returns complex R = u/(a u') at radius a."
+  [E V a L w-vec]
+  (let [E (double E)
+        a (double a)
+        L (long L)
+        [W0 RW aW] w-vec
+        W0 (double W0)
+        RW (double RW)
+        aW (double aW)
+        R0 (second V)
+        dr 0.001
+        imag-at (fn [^double r]
+                  (* -1.0 W0 (/ 1.0 (+ 1.0 (Math/exp (/ (- r RW) aW))))))]
+    (loop [x dr
+           d2udr2 (c/complex-cartesian (/ 1.0 dr) 0.0)
+           dudr (c/complex-cartesian 1.0 0.0)
+           ur (c/complex-cartesian dr 0.0)]
+      (if (> x a)
+        (c/div ur (c/mul (c/complex-cartesian a 0.0) dudr))
+        (let [v-re (+ (Coulomb-pot x R0) (WS x V))
+              v-im (imag-at x)
+              pot (c/complex-cartesian v-re v-im)
+              v-minus-e (c/subt pot (c/complex-cartesian E 0.0))
+              cent (/ (* L (inc L)) (* x x))
+              f-l (c/add (c/complex-cartesian cent 0.0) (c/mul mass-factor v-minus-e))
+              d2 (c/mul f-l ur)
+              h (c/complex-cartesian dr 0.0)
+              dudr-new (c/add dudr (c/mul d2 h))
+              ur-new (c/add ur (c/mul dudr-new h))]
+          (recur (+ x dr) d2 dudr-new ur-new))))))
 
 (defn r-matrix ([^double E V ^long L ]  ;with coulomb ;construct R-matrix * a depending on 1D Coulomb + Woods-Saxon potential V(R) = -V0/(1+exp ((r-R0)/a0)) V = [V0, R0, a0]
                                         ;choose u(0) = 0, u'(0) = 1 for initial conditions
@@ -851,35 +887,54 @@ precision 0.00001]
                     )))
 )
 
+(defn- hankel-rho-deriv-step
+  "Finite-difference step dρ for ∂H/∂ρ at matching radius ρ. A fixed 1e-7 fails for large L (Hankel
+  varies too fast / loses precision). Step scales ~0.01–2% of ρ for heavy-ion matching."
+  ^double [^double rho]
+  (double (max 1.0e-8 (min 2.0e-2 (* rho 2.0e-4)))))
+
+(defn- complex-finite?
+  "True if z has finite real and imaginary parts (avoids NaN-poisoned partial-wave sums)."
+  [z]
+  (try
+    (let [r (double (c/re z))
+          im (double (c/im z))]
+      (and (Double/isFinite r) (Double/isFinite im)))
+    (catch Exception _ false)))
+
 (defn s-matrix-3-impl [^double E V ^long L]
   (let [a (* 2 (+ (second V) (last V)))
         k (m/sqrt (* mass-factor E))
-        R (r-matrix E V a L)
+        wv *elastic-imag-ws-params*
+        R (if (and (sequential? wv) (pos? (double (first wv))))
+            (r-matrix-complex-imag-ws E V a L wv)
+            (c/complex-cartesian (r-matrix E V a L) 0.0))
         eta (* Z1Z2ee (/ mass-factor k 2))
-        rho (* k a)]
-    (c/div (c/subt2 (Hankel- L eta rho) (c/mul rho R (deriv Hankel- L eta rho 0.0000001)))
-           (c/subt2 (Hankel+ L eta rho) (c/mul rho R (deriv Hankel+ L eta rho 0.0000001))))))
+        rho (* k a)
+        rho-c (c/complex-cartesian rho 0.0)
+        d-rho (hankel-rho-deriv-step rho)]
+    (c/div (c/subt2 (Hankel- L eta rho) (c/mul rho-c R (deriv Hankel- L eta rho d-rho)))
+           (c/subt2 (Hankel+ L eta rho) (c/mul rho-c R (deriv Hankel+ L eta rho d-rho))))))
 
-;; Cache must include mass-factor and Z1Z2ee: they affect r-matrix, k, eta, rho, and Hankel matching.
-;; Otherwise (e.g. dashboard elastic) first projectile/target poisons the cache and only overall scale changes.
+;; Cache must include mass-factor, Z1Z2ee, and optional imaginary WS: all affect R and matching.
 (def ^:private s-matrix-3-memo
-  (memoize (fn [[E V L mf z12]]
-             (binding [mass-factor (double mf) Z1Z2ee (double z12)]
+  (memoize (fn [[E V L mf z12 wkey]]
+             (binding [mass-factor (double mf)
+                       Z1Z2ee (double z12)
+                       *elastic-imag-ws-params* wkey]
                (s-matrix-3-impl E V L)))))
 
 (defn s-matrix ([^double E V ^long L]
-                (s-matrix-3-memo [E (vec V) L mass-factor Z1Z2ee]))
+                (s-matrix-3-memo [E (vec V) L mass-factor Z1Z2ee *elastic-imag-ws-params*]))
 
  ([^double E V ^double a ^long L]
-                (let [
-                      k (m/sqrt (*  mass-factor E))
+                (let [k (m/sqrt (*  mass-factor E))
                       R (/ (r-matrix-a E V a L) a)
                       eta (* Z1Z2ee mass-factor (/ 1. k 2))
                       rho (* k a)
-                      ]
-                  (c/div (c/subt2 (Hankel- L eta rho) (c/mul rho R (deriv Hankel- L eta rho 0.0000001)) )
-                       (c/subt2 (Hankel+ L eta rho) (c/mul rho R (deriv Hankel+ L eta rho 0.0000001)) ))
-                  ))
+                      d-rho (hankel-rho-deriv-step rho)]
+                  (c/div (c/subt2 (Hankel- L eta rho) (c/mul rho R (deriv Hankel- L eta rho d-rho)))
+                       (c/subt2 (Hankel+ L eta rho) (c/mul rho R (deriv Hankel+ L eta rho d-rho))))))
 )
 
 
@@ -920,23 +975,42 @@ precision 0.00001]
   )
 
 ;; DWBA Differential Cross-Section Functions
-(defn differential-cross-section [E-cm ws-params theta-cm L-max]
-  "Calculate differential cross-section using full DWBA with Coulomb effects"
+(defn differential-cross-section
+  "Differential cross-section |f|² (fm²/sr) from partial-wave sum.
+  Fourth arg is either:
+  - a long/int L-max: sum L = 0 … L-max (legacy);
+  - a collection of non-negative longs: sum only those L (e.g. main-page angular momenta).
+  Partial waves whose S-matrix or amplitude is non-finite (NaN/Inf from Coulomb U/Hankel at
+  extreme L, η, ρ) are omitted so the sum stays finite; extend L only when numerics are stable."
+  [E-cm ws-params theta-cm L-spec]
   (let [k (m/sqrt (* mass-factor E-cm))
-        eta (* Z1Z2ee (/ mass-factor k 2))
-        ;; Sum over partial waves
-        total-amplitude 
-        (reduce c/add
-          (for [L (range 0 (inc L-max))]
-            (let [S-matrix-val (s-matrix E-cm ws-params L)
-                  ;; Scattering amplitude for this L
-                  f-L (c/mul (c/div (c/complex-cartesian 0 -1) k)
+        L-seq (if (number? L-spec)
+                (range 0 (inc (long L-spec)))
+                (sort (distinct (filter (fn [x] (>= (long x) 0)) (map long L-spec)))))
+        amp-for-L
+        (fn [^long L]
+          (let [S-matrix-val (s-matrix E-cm ws-params L)
+                f-L (c/mul (c/div (c/complex-cartesian 0 -1) k)
                            (inc (* 2 L))
                            (poly/eval-legendre-P L (m/cos theta-cm))
                            (c/subt S-matrix-val 1.0))]
-              f-L)))]
-    ;; Differential cross-section = |f|²
-    (c/mul total-amplitude (c/complex-conjugate total-amplitude))))
+            (when (and (complex-finite? S-matrix-val) (complex-finite? f-L))
+              f-L)))
+        amps (keep amp-for-L L-seq)
+        total-amplitude
+        (if (empty? amps)
+          (c/complex-cartesian 0.0 0.0)
+          (reduce (fn [acc a]
+                    (if (complex-finite? a)
+                      (c/add acc a)
+                      acc))
+                  (c/complex-cartesian 0.0 0.0)
+                  amps))]
+    ;; |f|² in Cartesian avoids complex/mul2 polar edge cases (ill-conditioned arg near 0·i).
+    (let [tr (double (c/re total-amplitude))
+          ti (double (c/im total-amplitude))
+          dsig (+ (* tr tr) (* ti ti))]
+      (c/complex-cartesian (if (Double/isFinite dsig) dsig 0.0) 0.0))))
 
 (defn total-cross-section [E-cm ws-params L-max]
   "Calculate total cross-section using DWBA"

@@ -125,6 +125,49 @@ class DWBADashboard {
         // Elastic target: show A/Z inputs only when Generic is selected
         document.getElementById('elastic_target')?.addEventListener('change', () => this.toggleElasticGenericInputs());
         this.toggleElasticGenericInputs();
+
+        document.getElementById('elastic_ratio_rutherford')?.addEventListener('change', () => {
+            if (this.currentData?.elastic) this.plotElastic();
+        });
+    }
+
+    /** Lab projectile mass (MeV/c²) and charge number for elastic kinematics (aligned with backend). */
+    elasticProjectileKinematics() {
+        const proj = (document.getElementById('elastic_projectile') || {}).value || 'p';
+        const masses = { p: 938.272, n: 939.565, d: 1875.613, a: 3727.379 };
+        const Z = { p: 1, n: 0, d: 1, a: 2 };
+        return { mass: masses[proj] || 938.272, Z: Z[proj] !== undefined ? Z[proj] : 1 };
+    }
+
+    /** Target A, Z for elastic tab (aligned with backend presets). */
+    elasticTargetAZ() {
+        const tgt = (document.getElementById('elastic_target') || {}).value || '16O';
+        if (tgt === '12C') return { A: 12, Z: 6 };
+        if (tgt === '16O') return { A: 16, Z: 8 };
+        const A = parseInt((document.getElementById('elastic_target_A') || {}).value, 10);
+        const Z = parseInt((document.getElementById('elastic_target_Z') || {}).value, 10);
+        return {
+            A: (Number.isFinite(A) && A >= 1) ? A : 16,
+            Z: (Number.isFinite(Z) && Z >= 0) ? Z : 8
+        };
+    }
+
+    /**
+     * Rutherford dσ/dΩ in mb/sr (non-relativistic, point Coulomb, CM frame).
+     * E_cm_mev = lab projectile kinetic × m_target / (m_proj + m_target); θ_cm in degrees.
+     */
+    rutherfordDsDomegaMbSr(Z1, Z2, E_cm_MeV, thetaCmDeg) {
+        const e2 = 1.44; // MeV·fm
+        if (Z1 * Z2 <= 0 || !(E_cm_MeV > 0)) return null;
+        const th = (thetaCmDeg * Math.PI) / 180;
+        const s = Math.sin(th / 2);
+        if (s < 1e-5) return null;
+        const fm2 = Math.pow((Z1 * Z2 * e2) / (4 * E_cm_MeV), 2) / Math.pow(s, 4);
+        return fm2 * 10.0; // 1 fm² = 10 mb
+    }
+
+    labToCmKineticMeV(mProjMeV, mTargMeV, eLabMeV) {
+        return eLabMeV * (mTargMeV / (mProjMeV + mTargMeV));
     }
 
     toggleElasticGenericInputs() {
@@ -385,13 +428,13 @@ class DWBADashboard {
         const lValuesEl = document.getElementById('L-values');
         const energiesStr = (energyRangeEl && energyRangeEl.value || '').trim();
         const LValuesStr = (lValuesEl && lValuesEl.value || '').trim();
-        if (!energiesStr || !LValuesStr) {
-            this.showStatus('Please provide valid energy range and angular momenta', 'error');
+        if (!energiesStr) {
+            this.showStatus('Please provide a valid energy range', 'error');
             return;
         }
-        // Build request body from current form (energies/L_values from inputs above)
+        // Backend fixes elastic dσ to L = 0…39; L_values is still sent for API consistency.
         const params = this.getParameters();
-        const body = { ...params, energies: energiesStr, L_values: LValuesStr };
+        const body = { ...params, energies: energiesStr, L_values: LValuesStr || '0,1,2,3,4,5' };
         
         // Debug: log what we're sending
         console.log('Elastic calculation - sending energies:', energiesStr);
@@ -421,7 +464,17 @@ class DWBADashboard {
             this.updateAllPlots();
             const used = result.data && result.data.parameters && result.data.parameters.energies;
             const n = Array.isArray(used) ? used.length : 0;
-            this.showStatus(`Done in ${Date.now() - startTime}ms${n ? ` (${n} energies)` : ''}`, 'success');
+            const p = result.data && result.data.parameters;
+            const edL = p && p.elastic_dsigma_L_values;
+            let lPart = '';
+            if (Array.isArray(edL) && edL.length) {
+                const lo = edL[0];
+                const hi = edL[edL.length - 1];
+                lPart = `, elastic dσ: L=${lo}…${hi} (${edL.length} partial waves)`;
+            } else if (p && Array.isArray(p.L_values) && p.L_values.length) {
+                lPart = `, L=[${p.L_values.join(',')}]`;
+            }
+            this.showStatus(`Done in ${Date.now() - startTime}ms${n ? ` (${n} energies)` : ''}${lPart}`, 'success');
         } catch (error) {
             console.error('Elastic calculation error:', error);
             this.showStatus(`Error: ${error.message}`, 'error');
@@ -702,6 +755,15 @@ class DWBADashboard {
         const data = this.currentData.elastic;
         if (!data || data.length === 0) return;
 
+        const ratioMode = !!(document.getElementById('elastic_ratio_rutherford') || {}).checked;
+        const projK = this.elasticProjectileKinematics();
+        const targAZ = this.elasticTargetAZ();
+        const mTarg = targAZ.A * 931.5;
+        const z1 = projK.Z;
+        const z2 = targAZ.Z;
+        const canRatio = ratioMode && z1 * z2 > 0;
+        const ratioUnavailable = ratioMode && z1 * z2 <= 0;
+
         // Get current energy range from form to filter data
         const energyRangeEl = document.getElementById('energy-range');
         const requestedEnergies = energyRangeEl && energyRangeEl.value 
@@ -728,15 +790,29 @@ class DWBADashboard {
                     marker: { size: 4 }
                 };
             }
+            const dsigma = point.differential_cross_section;
+            let yVal = dsigma;
+            if (canRatio) {
+                const eCm = this.labToCmKineticMeV(projK.mass, mTarg, E);
+                const ruth = this.rutherfordDsDomegaMbSr(z1, z2, eCm, point.angle);
+                yVal = ruth && ruth > 0 ? dsigma / ruth : NaN;
+            }
             traces[E].x.push(point.angle);
-            traces[E].y.push(point.differential_cross_section);
+            traces[E].y.push(yVal);
         });
 
         const plotData = Object.values(traces);
         const layout = {
-            title: 'Elastic Scattering Differential Cross-Section',
-            xaxis: { title: 'Scattering Angle (degrees)', gridcolor: '#e0e0e0' },
-            yaxis: { title: 'dσ/dΩ (mb/sr)', type: 'log', gridcolor: '#e0e0e0' },
+            title: canRatio
+                ? 'Elastic dσ/dΩ / σ_Rutherford'
+                : ratioUnavailable
+                    ? 'Elastic dσ/dΩ (mb/sr)'
+                    : 'Elastic differential cross section',
+            xaxis: { title: 'Scattering angle θ_cm (degrees)', gridcolor: '#e0e0e0' },
+            yaxis: canRatio
+                ? { title: 'dσ/dΩ / σ_Rutherford', type: 'log', gridcolor: '#e0e0e0' }
+                : { title: 'dσ/dΩ (mb/sr)', type: 'log', gridcolor: '#e0e0e0' },
+            annotations: [],
             plot_bgcolor: 'rgba(0,0,0,0)',
             paper_bgcolor: 'rgba(0,0,0,0)',
             font: { family: 'Arial, sans-serif' },
@@ -843,9 +919,7 @@ class DWBADashboard {
         }
 
         const layout = {
-            title: hasAngle
-                ? 'Transfer Reaction Differential Cross-Section (dσ/dΩ vs angle; zero at 90° for L=1 is physical)'
-                : 'Transfer Reaction Differential Cross-Section',
+            title: 'Transfer Reaction Differential Cross-Section',
             xaxis: { title: xTitle, gridcolor: '#e0e0e0' },
             yaxis: { title: 'dσ/dΩ (mb/sr)', type: 'log', gridcolor: '#e0e0e0' },
             plot_bgcolor: 'rgba(0,0,0,0)',

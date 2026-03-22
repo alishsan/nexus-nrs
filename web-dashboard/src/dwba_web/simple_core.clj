@@ -249,6 +249,10 @@
 (def ^:private default-energies [5.0 10.0 15.0 20.0 25.0])
 (def ^:private default-L-values [0 1 2 3 4 5])
 
+;; Elastic dσ/dΩ: always sum partial waves L = 0 … 39 (L < 40) for convergence / numerics;
+;; ignores the main form "L values" list (still used by phase shift / inelastic / transfer APIs).
+(def ^:private elastic-dsigma-L-values (vec (range 40)))
+
 (defn- ensure-energies-L [energies L-values]
   [(if (empty? energies) default-energies energies)
    (if (empty? L-values) default-L-values L-values)])
@@ -309,6 +313,7 @@
           L-values-raw (or (query-param req "L_values") (:L_values p))
           parsed-energies (parse-doubles energies-raw)
           parsed-L (parse-ints L-values-raw)
+          ;; L_values from form kept for response metadata only; dσ uses elastic-dsigma-L-values.
           [energies L-values] (ensure-energies-L parsed-energies parsed-L)
           ws (ws-params-from p)
           ws-w (ws-w-params-from p)
@@ -332,24 +337,32 @@
           target-mass (* 931.5 target-A)
           mu (/ (* proj-mass target-mass) (+ proj-mass target-mass))
           mass-factor-elastic (/ (* 2.0 mu) (* 197.327 197.327))
-          z1z2ee (* proj-Z target-Z 1.44)]
+          z1z2ee (* proj-Z target-Z 1.44)
+          ;; E in the request is lab-frame projectile kinetic (MeV). functions/differential-cross-section
+          ;; expects CM kinetic energy — same convention as Rutherford ratio in the dashboard JS.
+          e-cm-factor (/ target-mass (+ proj-mass target-mass))
+]
       (let [dsigma-fn (or (resolve 'functions/differential-cross-section) (do (require 'functions) (resolve 'functions/differential-cross-section)))
-            L-max (apply max L-values)
             ;; Elastic dσ/dΩ in mb/sr (functions returns fm²/sr; 1 fm² = 10 mb)
             fm2->mb 10.0
             elastic-data (for [E energies theta angles]
-                           (let [theta-rad (* theta (/ Math/PI 180.0))
+                           (let [e-cm (* E e-cm-factor)
+                                 theta-rad (* theta (/ Math/PI 180.0))
                                  dsigma-complex (if dsigma-fn
                                                   (binding [phys/mass-factor mass-factor-elastic
-                                                            phys/Z1Z2ee z1z2ee]
-                                                    (dsigma-fn E ws theta-rad L-max))
+                                                            phys/Z1Z2ee z1z2ee
+                                                            phys/*elastic-imag-ws-params* ws-w]
+                                                    (dsigma-fn e-cm ws theta-rad elastic-dsigma-L-values))
                                                   0.0)
                                  dsigma-fm2 (if (number? dsigma-complex) dsigma-complex (c/mag dsigma-complex))]
+                             ;; :energy stays lab T_lab for plot labels / filter (matches form)
                              {:energy E :angle theta :differential_cross_section (* fm2->mb dsigma-fm2)}))]
         (response {:success true
                    :data {:elastic elastic-data
                           :parameters (merge {:energies energies
                                               :L_values L-values
+                                              :elastic_dsigma_L_values elastic-dsigma-L-values
+                                              :elastic_dsigma_L_note "Elastic dσ/dΩ sums L = 0 … 39 (fixed); main form L list is for other tabs only."
                                               :ws_params ws
                                               :radius radius
                                               :angles angles
@@ -513,8 +526,8 @@
                                                                :V0 40.0 :R0 2.0 :a0 0.6 :radius 3.0
                                                                :W0 0.0 :R_W 2.0 :a_W 0.6
                                                                :E_ex 4.44 :lambda 2 :beta 0.25 :reaction_type "p-d"}
-                                         :parameter_ranges {:V0 {:min -100.0 :max 100.0 :step 1.0} :R0 {:min 0.5 :max 5.0 :step 0.1}
-                                                            :a0 {:min 0.1 :max 2.0 :step 0.1} :radius {:min 1.0 :max 10.0 :step 0.1}
+                                         :parameter_ranges {:V0 {:min -100.0 :max 100.0 :step 1.0} :R0 {:min 0.5 :max 10.0 :step 0.1}
+                                                            :a0 {:min 0.1 :max 2.0 :step 0.1} :radius {:min 1.0 :max 30.0 :step 0.1}
                                                             :W0 {:min 0.0 :max 50.0 :step 0.5} :R_W {:min 0.5 :max 6.0 :step 0.1} :a_W {:min 0.1 :max 2.0 :step 0.1}
                                                             :E_ex {:min 0.0 :max 20.0 :step 0.1} :lambda {:min 1 :max 5 :step 1} :beta {:min 0.0 :max 1.0 :step 0.01}}}))
     (GET "/api/transfer-default" req (handle-transfer-default req))

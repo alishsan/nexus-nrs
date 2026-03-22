@@ -179,7 +179,7 @@
                         (show-status (str "Error: " (.-message error)) "error")))
               (.finally (fn []
                           (set! (.-disabled calculate-btn) false)
-                          (set! (.-innerHTML calculate-btn) "<i class=\"fas fa-calculator\"></i> Calculate DWBA"))))
+                          (set! (.-innerHTML calculate-btn) "<i class=\"fas fa-calculator\"></i> Calculate DWBA")))))
 
           ;; Elastic scattering only
           :elastic
@@ -203,7 +203,7 @@
                         (show-status (str "Error: " (.-message error)) "error")))
               (.finally (fn []
                           (set! (.-disabled calculate-btn) false)
-                          (set! (.-innerHTML calculate-btn) "<i class=\"fas fa-calculator\"></i> Calculate DWBA"))))
+                          (set! (.-innerHTML calculate-btn) "<i class=\"fas fa-calculator\"></i> Calculate DWBA")))))
 
           ;; Inelastic scattering only
           :inelastic
@@ -227,7 +227,7 @@
                         (show-status (str "Error: " (.-message error)) "error")))
               (.finally (fn []
                           (set! (.-disabled calculate-btn) false)
-                          (set! (.-innerHTML calculate-btn) "<i class=\"fas fa-calculator\"></i> Calculate DWBA"))))
+                          (set! (.-innerHTML calculate-btn) "<i class=\"fas fa-calculator\"></i> Calculate DWBA")))))
 
           ;; Transfer reactions only
           :transfer
@@ -251,13 +251,13 @@
                         (show-status (str "Error: " (.-message error)) "error")))
               (.finally (fn []
                           (set! (.-disabled calculate-btn) false)
-                          (set! (.-innerHTML calculate-btn) "<i class=\"fas fa-calculator\"></i> Calculate DWBA"))))
+                          (set! (.-innerHTML calculate-btn) "<i class=\"fas fa-calculator\"></i> Calculate DWBA")))))
 
           ;; Default: fall back to core calculation
           (do
             (js/console.warn "Unknown active tab, defaulting to core calculation" (str active-tab))
             (set! (.-disabled calculate-btn) false)
-            (set! (.-innerHTML calculate-btn) "<i class=\"fas fa-calculator\"></i> Calculate DWBA"))))))))
+            (set! (.-innerHTML calculate-btn) "<i class=\"fas fa-calculator\"></i> Calculate DWBA")))))))
 
 ;; Normalize API data keys (backend may send phase_shifts or phase-shifts etc.)
 (defn normalize-data-keys [data]
@@ -338,7 +338,7 @@
                                                           :name (str "L = " L " (Coul+Nuc)")
                                                           :type "scatter"
                                                           :mode "lines+markers"
-                                                          :line {:dash "dash"}}}))))
+                                                          :line {:dash "dash"}}})))))
                        {} data)
         plot-data (clj->js (mapcat (fn [trace] [(:nuclear trace) (:coulomb-nuclear trace)]) (vals traces)))
         layout (clj->js {:title "R-Matrix Values Comparison"
@@ -468,25 +468,26 @@
 (defn plot-elastic []
   (let [data (:elastic (:current-data @dashboard-state))]
     (when (and data (not (empty? data)))
-      (let [traces (reduce (fn [traces point]
+      (let [ds (fn [p] (or (:differential_cross_section p) (:differential-cross-section p)))
+            traces (reduce (fn [traces point]
                              (let [E (:energy point)]
                                (update traces E
-                                        (fn [trace]
-                                          (if trace
-                                            (-> trace
-                                                (update :x conj (:angle point))
-                                                (update :y conj (:differential-cross-section point)))
-                                            {:x [(:angle point)]
-                                             :y [(:differential-cross-section point)]
-                                             :name (str "E = " E " MeV")
-                                             :type "scatter"
-                                             :mode "lines+markers"
-                                             :line {:width 2}
-                                             :marker {:size 4}})))))
+                                       (fn [trace]
+                                         (if trace
+                                           (-> trace
+                                               (update :x conj (:angle point))
+                                               (update :y conj (ds point)))
+                                           {:x [(:angle point)]
+                                            :y [(ds point)]
+                                            :name (str "E = " E " MeV")
+                                            :type "scatter"
+                                            :mode "lines+markers"
+                                            :line {:width 2}
+                                            :marker {:size 4}})))))
                            {} data)
             plot-data (clj->js (vals traces))
             layout (clj->js {:title "Elastic Scattering Differential Cross-Section"
-                             :xaxis {:title "Scattering Angle (degrees)" :gridcolor "#e0e0e0"}
+                             :xaxis {:title "Scattering angle θ_cm (degrees)" :gridcolor "#e0e0e0"}
                              :yaxis {:title "dσ/dΩ (mb/sr)" :type "log" :gridcolor "#e0e0e0"}
                              :plot_bgcolor "rgba(0,0,0,0)"
                              :paper_bgcolor "rgba(0,0,0,0)"
