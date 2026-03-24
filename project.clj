@@ -5,7 +5,9 @@
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[org.clojure/clojure "1.12.0"]
-                 [generateme/fastmath "3.0.0-alpha4-SNAPSHOT" :exclusions [com.github.haifengl/smile-mkl]]
+                 ;; Non-SNAPSHOT: alpha4-SNAPSHOT builds have triggered NoClassDefFoundError
+                 ;; fastmath/special$Si (wrong name: fastmath/special$si) on case-insensitive APFS.
+                 [generateme/fastmath "3.0.0-alpha4" :exclusions [com.github.haifengl/smile-mkl]]
                  [incanter/incanter-core "1.9.3"]
                  [incanter/incanter-charts "1.9.3"]
                  [com.hypirion/clj-xchart "0.2.0"]

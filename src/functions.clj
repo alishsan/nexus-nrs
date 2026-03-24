@@ -976,7 +976,7 @@ precision 0.00001]
 
 ;; DWBA Differential Cross-Section Functions
 (defn differential-cross-section
-  "Differential cross-section |f|² (fm²/sr) from partial-wave sum.
+  "Differential cross-section |f|² (**mb/sr**) from partial-wave sum (partial-wave |f|² × 10).
   Fourth arg is either:
   - a long/int L-max: sum L = 0 … L-max (legacy);
   - a collection of non-negative longs: sum only those L (e.g. main-page angular momenta).
@@ -1006,16 +1006,16 @@ precision 0.00001]
                       acc))
                   (c/complex-cartesian 0.0 0.0)
                   amps))]
-    ;; |f|² in Cartesian avoids complex/mul2 polar edge cases (ill-conditioned arg near 0·i).
+    ;; |f|² in Cartesian → store real part as mb/sr (×10 from fm²/sr convention).
     (let [tr (double (c/re total-amplitude))
           ti (double (c/im total-amplitude))
-          dsig (+ (* tr tr) (* ti ti))]
+          dsig (* 10.0 (+ (* tr tr) (* ti ti)))]
       (c/complex-cartesian (if (Double/isFinite dsig) dsig 0.0) 0.0))))
 
 (defn total-cross-section [E-cm ws-params L-max]
-  "Calculate total cross-section using DWBA"
+  "Total cross-section σ (integrated); returns **mb** (partial-wave sum × 10, 1 fm² = 10 mb)."
   (let [k (m/sqrt (* mass-factor E-cm))
-        ;; Sum over partial waves
+        ;; Sum over partial waves (kinematic area in fm² before ×10)
         total-sigma
         (reduce +
           (for [L (range 0 (inc L-max))]
@@ -1024,4 +1024,4 @@ precision 0.00001]
                   sigma-L (* (/ 2 E-cm) Math/PI (inc (* 2 L)) 
                              (Math/pow (c/mag (c/subt 1.0 S-matrix-val)) 2))]
               sigma-L)))]
-    total-sigma))
+    (* 10.0 total-sigma)))

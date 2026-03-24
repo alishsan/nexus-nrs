@@ -156,7 +156,10 @@
       S-factor 1.0
       theta-deg 0.0  ; Forward angle (degrees)
       theta-rad (* theta-deg (/ Math/PI 180.0))
-      ;; Pass l-i, l-f so only allowed L contribute (L selection: triangle + parity)
+      ;; Pass l-i, l-f so only allowed L contribute (L selection: triangle + parity).
+      ;; **Note:** This uses **|Y_L0|²** per L → CM shape is **σ(θ)=σ(180°−θ)** for parity-selected L.
+      ;; Asymmetry needs full **m**-sum: **`transfer-differential-cross-section-angular-m-sum`** (meaningful
+      ;; when several L contribute and **l_i≥1**; for **l_i=1,l_f=0** only **L=1** is allowed → still symmetric).
       dsigma (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f 
                                                            theta-rad mass-factor-i mass-factor-f 0.0 l-i l-f)
       ;; At 70° (compare to experiment: ~0.5 mb/sr at 20 MeV)
@@ -168,16 +171,15 @@
       angles-deg (range 0.0 181.0 5.0)
       angles-rad (mapv #(* % (/ Math/PI 180.0)) angles-deg)
       dsigma-mb-sr (mapv (fn [theta-rad]
-                           (* 10.0 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f
-                                                                                  theta-rad mass-factor-i mass-factor-f 0.0 l-i l-f)))
+                           (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f
+                                                                          theta-rad mass-factor-i mass-factor-f 0.0 l-i l-f))
                          angles-rad)
       ;; Same angle set as web dashboard: 20° to 160° step 20° (CM)
       angles-output-deg (range 20.0 181.0 20.0)
       dsigma-at-angles (mapv (fn [theta-deg]
-                               (let [theta-rad (* theta-deg (/ Math/PI 180.0))
-                                     dsigma-fm2 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f
-                                                                                               theta-rad mass-factor-i mass-factor-f 0.0 l-i l-f)]
-                                 (* 10.0 dsigma-fm2)))
+                               (let [theta-rad (* theta-deg (/ Math/PI 180.0))]
+                                 (t/transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f
+                                                                                theta-rad mass-factor-i mass-factor-f 0.0 l-i l-f)))
                              angles-output-deg)]
   
   ;; ============================================================================
@@ -285,11 +287,9 @@
   (println (format "Scattering angle: θ = %.1f° (%.4f rad)" theta-deg theta-rad))
   (println "")
   
-  (println "Differential cross section:")
-  (println (format "  dσ/dΩ(θ=%.1f°) = %.6e fm²/sr" theta-deg dsigma))
-  (println (format "  dσ/dΩ(θ=%.1f°) = %.6e mb/sr (1 mb = 10 fm²)" theta-deg (* dsigma 10.0)))
-  (println (format "  dσ/dΩ(θ=%.1f°) = %.6e fm²/sr" theta-70-deg dsigma-70))
-  (println (format "  dσ/dΩ(θ=%.1f°) = %.6e mb/sr (experiment at 20 MeV, 70°: ~0.5 mb/sr)" theta-70-deg (* dsigma-70 10.0)))
+  (println "Differential cross section (mb/sr):")
+  (println (format "  dσ/dΩ(θ=%.1f°) = %.6e mb/sr" theta-deg dsigma))
+  (println (format "  dσ/dΩ(θ=%.1f°) = %.6e mb/sr (experiment at 20 MeV, 70°: ~0.5 mb/sr)" theta-70-deg dsigma-70))
   (println "")
   (println "DCS at different angles (CM, same as web dashboard; mb/sr):")
   (println "  Angle (deg) | dσ/dΩ (mb/sr)")

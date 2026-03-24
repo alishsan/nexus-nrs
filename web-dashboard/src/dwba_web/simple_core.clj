@@ -135,15 +135,13 @@
           S-factor 1.0
           E-default 20.0
           angles-deg (range 20.0 181.0 20.0)]
-      (let [;; Transfer module output → mb/sr (use 0.01 to match paper/experiment scale)
-            fm2->mb 0.01
-            transfer-vec (vec (for [theta-deg angles-deg]
+      (let [transfer-vec (vec (for [theta-deg angles-deg]
                                 (let [theta-rad (* theta-deg (/ Math/PI 180.0))
-                                      dsigma-fm2 (t T-amplitudes S-factor k-i k-f theta-rad
-                                                    mass-factor-i mass-factor-f 0.0 l-i l-f)]
+                                      dsigma-mb-sr (t T-amplitudes S-factor k-i k-f theta-rad
+                                                      mass-factor-i mass-factor-f 0.0 l-i l-f)]
                                   {:energy E-default
                                    :angle theta-deg
-                                   :differential_cross_section (* fm2->mb dsigma-fm2)})))]
+                                   :differential_cross_section (double dsigma-mb-sr)})))]
         {:label label
          :transfer transfer-vec}))))
 
@@ -362,8 +360,6 @@
           e-cm-factor (/ target-mass (+ proj-mass target-mass))
 ]
       (let [dsigma-fn (or (resolve 'functions/differential-cross-section) (do (require 'functions) (resolve 'functions/differential-cross-section)))
-            ;; Elastic dσ/dΩ in mb/sr (functions returns fm²/sr; 1 fm² = 10 mb)
-            fm2->mb 10.0
             elastic-data (for [E energies theta angles]
                            (let [e-cm (* E e-cm-factor)
                                  theta-rad (* theta (/ Math/PI 180.0))
@@ -373,9 +369,9 @@
                                                             phys/*elastic-imag-ws-params* ws-w]
                                                     (dsigma-fn e-cm ws theta-rad elastic-dsigma-L-values))
                                                   0.0)
-                                 dsigma-fm2 (if (number? dsigma-complex) dsigma-complex (c/mag dsigma-complex))]
+                                 dsigma-mb-sr (if (number? dsigma-complex) dsigma-complex (c/mag dsigma-complex))]
                              ;; :energy stays lab T_lab for plot labels / filter (matches form)
-                             {:energy E :angle theta :differential_cross_section (* fm2->mb dsigma-fm2)}))]
+                             {:energy E :angle theta :differential_cross_section (double dsigma-mb-sr)}))]
         (response {:success true
                    :data {:elastic elastic-data
                           :parameters (merge {:energies energies
@@ -467,17 +463,15 @@
                                                        zero-complex
                                                        L-values)
                                                nil)
-                                       dsigma-fm2 (if T-sum
-                                                    (let [k-i (Math/sqrt (* mass-factor E-i))
-                                                          E-f (- E-i E-ex)
-                                                          k-f (Math/sqrt (* mass-factor E-f))]
-                                                      (inelastic-dsigma-fn T-sum k-i k-f E-i E-ex mass-factor))
-                                                    (reduce + 0.0 (for [L-i L-values]
-                                                                    (inel-cross (entrance-wave E-i L-i) (exit-wave E-i L-i)
-                                                                                lambda mu beta ws E-i E-ex r-max h mass-factor))))
-                                       ;; 1 fm² = 10 mb => dσ/dΩ (mb/sr) = dσ/dΩ (fm²/sr) * 10
-                                       dsigma-mb (* 10.0 dsigma-fm2)]
-                                   {:energy E-i :lambda lambda :excitation_energy E-ex :differential_cross_section dsigma-mb})
+                                       dsigma-mb-sr (if T-sum
+                                                      (let [k-i (Math/sqrt (* mass-factor E-i))
+                                                            E-f (- E-i E-ex)
+                                                            k-f (Math/sqrt (* mass-factor E-f))]
+                                                        (inelastic-dsigma-fn T-sum k-i k-f E-i E-ex mass-factor))
+                                                      (reduce + 0.0 (for [L-i L-values]
+                                                                      (inel-cross (entrance-wave E-i L-i) (exit-wave E-i L-i)
+                                                                                  lambda mu beta ws E-i E-ex r-max h mass-factor))))]
+                                   {:energy E-i :lambda lambda :excitation_energy E-ex :differential_cross_section (double dsigma-mb-sr)})
                                  (catch Exception e {:energy E-i :lambda lambda :excitation_energy E-ex :differential_cross_section 0.0 :error (.getMessage e)})))]
           (response {:success true :data {:inelastic inelastic-data :parameters {:energies energies :L_values L-values :lambdas lambdas :ws_params ws :E_ex E-ex :beta beta :h h :r_max r-max
                                                                                   :projectile projectile-str :inelastic_target target-str}}})))
@@ -512,21 +506,20 @@
           overlap-approx (normalized-overlap phi-i phi-f r-max h)
           D0 (zero-range-const reaction-type)
           angles-deg (range 20.0 181.0 20.0)]
-      ;; DCS vs. angle in mb/sr (transfer output scaled by 0.01 for mb/sr)
-      (let [fm2->mb 0.01
-            transfer-data (for [E-i energies
-                               theta-deg angles-deg]
-                           (try
-                             (let [E-f-approx (* 0.8 E-i)
-                                   k-i (Math/sqrt (* mass-factor E-i))
-                                   k-f (Math/sqrt (* mass-factor E-f-approx))
-                                   T (transfer-amp overlap-approx D0)
-                                   T-amplitudes {L-partial T}
-                                   theta-rad (* theta-deg (/ Math/PI 180.0))
-                                   dsigma-fm2 (transfer-dsigma-angular T-amplitudes S-factor k-i k-f theta-rad
-                                                                       mass-factor mass-factor 0.0 l-i l-f)]
-                               {:energy E-i :angle theta-deg :differential_cross_section (* fm2->mb dsigma-fm2)})
-                             (catch Exception e {:energy E-i :angle theta-deg :differential_cross_section 0.0 :error (.getMessage e)})))]
+      ;; DCS vs. angle in mb/sr (`transfer-differential-cross-section-angular` returns mb/sr)
+      (let [transfer-data (for [E-i energies
+                                theta-deg angles-deg]
+                            (try
+                              (let [E-f-approx (* 0.8 E-i)
+                                    k-i (Math/sqrt (* mass-factor E-i))
+                                    k-f (Math/sqrt (* mass-factor E-f-approx))
+                                    T (transfer-amp overlap-approx D0)
+                                    T-amplitudes {L-partial T}
+                                    theta-rad (* theta-deg (/ Math/PI 180.0))
+                                    dsigma-mb-sr (transfer-dsigma-angular T-amplitudes S-factor k-i k-f theta-rad
+                                                                          mass-factor mass-factor 0.0 l-i l-f)]
+                                {:energy E-i :angle theta-deg :differential_cross_section (double dsigma-mb-sr)})
+                              (catch Exception e {:energy E-i :angle theta-deg :differential_cross_section 0.0 :error (.getMessage e)})))]
         (response {:success true :data {:transfer transfer-data
                                         :parameters {:energies energies :L_values L-values
                                                      :ws_params ws :bound_state_ws ws

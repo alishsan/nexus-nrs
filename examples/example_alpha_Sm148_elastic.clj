@@ -39,14 +39,15 @@
 
 (def L-max 50)
 
-(defn rutherford-dsigma-fm2
-  "Point-charge Rutherford dσ/dΩ (fm²/sr), non-relativistic CM. Z1Z2e² in MeV·fm, E_cm in MeV, θ rad."
+(defn rutherford-dsigma-mb-sr
+  "Point-charge Rutherford dσ/dΩ (**mb/sr**), non-relativistic CM. Z1Z2e² in MeV·fm, E_cm in MeV, θ rad."
   [^double z1z2e2 ^double e-cm ^double theta-rad]
-  (let [s (Math/sin (* 0.5 theta-rad))]
-    (if (< (Math/abs s) 1e-15)
-      Double/NaN
-      (/ (Math/pow (/ z1z2e2 (* 4.0 e-cm)) 2.0)
-         (Math/pow s 4.0)))))
+  (* 10.0
+     (let [s (Math/sin (* 0.5 theta-rad))]
+       (if (< (Math/abs s) 1e-15)
+         Double/NaN
+         (/ (Math/pow (/ z1z2e2 (* 4.0 e-cm)) 2.0)
+            (Math/pow s 4.0))))))
 
 (println "=== α + ¹⁴⁸Sm elastic (check script) ===")
 (println "")
@@ -65,12 +66,10 @@
 (println "")
 (let [pref (/ z1z2ee (* 4.0 E-CM))
       pref2 (* pref pref)]
-  (println "  dσ/dΩ|_Ruth = (Z₁Z₂e² / (4 E_cm))² / sin⁴(θ/2)")
-  (println "  Units: Z₁Z₂e² in MeV·fm, E_cm in MeV  →  (…)² has dimensions fm²  →  dσ/dΩ in fm²/sr.")
-  (println "  Conversion printed elsewhere: 1 fm² = 10 mb  →  multiply fm²/sr by 10 for mb/sr.")
+  (println "  dσ/dΩ|_Ruth = (Z₁Z₂e² / (4 E_cm))² / sin⁴(θ/2)  →  **mb/sr** here (×10 from fm²/sr).")
   (println "")
   (println (format "  Z₁Z₂e² / (4 E_cm) = %.4f / (4 × %.4f) = %.6f fm" z1z2ee E-CM pref))
-  (println (format "  (Z₁Z₂e² / (4 E_cm))² = %.6f fm²  (angle-independent prefactor)" pref2))
+  (println (format "  (Z₁Z₂e² / (4 E_cm))² = %.6f (fm²); ×10 ⇒ mb/sr prefactor scale" pref2))
   (println "")
   (println "  Forward peaking comes entirely from 1/sin⁴(θ/2): sin(5°) ≈ 0.0872, sin⁴(5°) ≈ 5.77×10⁻⁵,")
   (println "  so σ_Ruth(10°) is ~1/sin⁴ larger than at θ where sin⁴ ~ 𝒪(1) (e.g. near 90°).")
@@ -80,8 +79,8 @@
           s (Math/sin (* 0.5 th))
           s4 (Math/pow s 4)
           sig (/ pref2 s4)]
-      (println (format "  θ_cm = %3d°: sin(θ/2) = %.6f, sin⁴(θ/2) = %.5e  →  σ_Ruth = %10.2f fm²/sr = %12.1f mb/sr"
-                       deg s s4 sig (* 10 sig))))))
+      (println (format "  θ_cm = %3d°: sin(θ/2) = %.6f, sin⁴(θ/2) = %.5e  →  σ_Ruth = %12.1f mb/sr"
+                       deg s s4 (* 10.0 sig))))))
 (println "")
 (println "  What the dσ table below is NOT:")
 (println "  • functions/differential-cross-section is |Σ_L f_L|² with f_L ∝ [(2L+1)/k] P_L(cos θ) (S_L − 1).")
@@ -126,17 +125,16 @@
             ;; |f|² returned as near-real complex; Cartesian magnitude avoids refer/shadow bugs.
             r (double (cpx/re ds-c))
             i (double (cpx/im ds-c))
-            ds-fm2 (Math/sqrt (+ (* r r) (* i i)))
-            ruth (rutherford-dsigma-fm2 z1z2ee E-CM theta)
+            ds-mb-sr (Math/sqrt (+ (* r r) (* i i)))
+            ruth (rutherford-dsigma-mb-sr z1z2ee E-CM theta)
             ratio (if (and (Double/isFinite ruth) (> ruth 0.0))
-                    (/ ds-fm2 ruth)
-                    Double/NaN)
-            ds-mb (* ds-fm2 10.0)]
+                    (/ ds-mb-sr ruth)
+                    Double/NaN)]
         (if (Double/isFinite ratio)
           (println (format "   %6.1f    |     %12.5f | %12.5e"
-                           (double theta-deg) ratio ds-mb))
+                           (double theta-deg) ratio ds-mb-sr))
           (println (format "   %6.1f    |     (n/a θ→0°) | %12.5e"
-                           (double theta-deg) ds-mb))))
+                           (double theta-deg) ds-mb-sr))))
       (catch Exception e
         (println (format "   %6.1f    | ERROR: %s" theta-deg (.getMessage e))))))
   (println "")

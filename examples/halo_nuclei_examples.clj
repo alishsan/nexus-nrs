@@ -220,12 +220,9 @@
       ;; Spectroscopic factor (typical value for single-particle transfer)
       S-factor 1.0
       
-      ;; Calculate differential cross-section (fm²/sr)
-      dsigma (transfer/transfer-differential-cross-section
-              T-amplitude S-factor k-i k-f mass-factor-i mass-factor-f)
-      
-      ;; Convert to mb/sr (1 fm² = 10 mb)
-      dsigma-mb (* dsigma 10.0)
+      ;; Differential cross-section (mb/sr) from transfer layer
+      dsigma-mb (transfer/transfer-differential-cross-section
+                 T-amplitude S-factor k-i k-f mass-factor-i mass-factor-f)
       
       ;; Calculate cross-section at different angles (for table)
       ;; For L=0 transfer, angular distribution is isotropic (constant)
@@ -244,13 +241,12 @@
   (println "")
   (println "   Differential Cross-Section (dσ/dΩ):")
   (println "   " (apply str (repeat 50 "-")))
-  (println (format "   %6s  %12s  %12s" "θ (deg)" "dσ/dΩ (mb/sr)" "dσ/dΩ (fm²/sr)"))
+  (println (format "   %6s  %12s" "θ (deg)" "dσ/dΩ (mb/sr)"))
   (println "   " (apply str (repeat 50 "-")))
   (doseq [cs cross-sections]
-    (println (format "   %6d  %12.4e  %12.4e"
+    (println (format "   %6d  %12.4e"
                     (:angle cs)
-                    (:dsigma cs)
-                    (/ (:dsigma cs) 10.0))))
+                    (:dsigma cs))))
   (println "   " (apply str (repeat 50 "-")))
   (println (format "   Note: For L=0 transfer, angular distribution is isotropic"))
   (println (format "   Total cross-section (estimated): σ ≈ %.2f mb"
@@ -339,9 +335,8 @@
                 (vec (take min-len-f phi-i))
                 (vec (take min-len-f phi-f-finite))
                 r-max h :zero-range D0)
-      dsigma-finite (transfer/transfer-differential-cross-section
-                     T-finite S-factor k-i k-f mass-factor-i mass-factor-f)
-      dsigma-finite-mb (* 10.0 dsigma-finite)
+      dsigma-finite-mb (transfer/transfer-differential-cross-section
+                        T-finite S-factor k-i k-f mass-factor-i mass-factor-f)
       ;; Experimental reference (same as Example 7)
       exp-dsigma-mb 0.07]
   (println "   Transfer cross section (L=0 isotropic):")

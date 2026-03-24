@@ -637,8 +637,8 @@
       (is (> dsigma 0.0) "dσ/dΩ should be positive")
       (is (not (Double/isNaN dsigma)) "dσ/dΩ should not be NaN")
       (is (not (Double/isInfinite dsigma)) "dσ/dΩ should not be infinite")
-      ;; Should be in reasonable range (typically 10^-6 to 10^2 fm²/sr for inelastic scattering)
-      (is (< dsigma 1e3) "dσ/dΩ should be reasonable (< 1000 fm²/sr)"))))
+      ;; Reasonable mb/sr range for this reduced test setup
+      (is (< dsigma 1e4) "dσ/dΩ should be reasonable (< 10^4 mb/sr)"))))
 
 (deftest inelastic-differential-cross-section-proportionality-test
   (testing "dσ/dΩ is proportional to |T_inel|²"

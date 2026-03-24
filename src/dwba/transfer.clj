@@ -949,6 +949,80 @@
   (println ""))
 
 ;; ============================================================================
+;; Radial convention: reduced u(r)=r·R(r) → R(r) for volume overlaps
+;; ============================================================================
+
+(defn- radial-R-from-reduced-u
+  "Convert reduced radial amplitudes u(r)=r·R(r) (Numerov convention in this namespace)
+  to the radial factor R(r)=u(r)/r used in the **three-dimensional** zero-range POST overlap
+
+    ∫ χ_f^*(\\vec r) χ_i(\\vec r) φ_f^*(\\vec r) φ_i(\\vec r) d³r
+    → 4π ∫ R_{χ_f} R_{χ_i} R_{φ_f} R_{φ_i} r² dr   (spherical, s-wave cluster / fixed L block).
+
+  All χ and φ passed to `transfer-amplitude-post` are **u** on an r = i·h grid; using u in place
+  of R mis-scales the integrand by O(r⁴) relative to the correct r² measure and blows the
+  cross section vs. flux-normalized codes (e.g. DWUCK).
+
+  At r=0 we return R=0: the Simpson integrand is weighted by r², so this point contributes
+  nothing; avoids 0/0 for u(0)=0."
+  [u-vec ^double h]
+  (mapv (fn [^long i u-val]
+          (let [r (* (double i) h)]
+            (if (< r 1e-14)
+              (if (number? u-val) 0.0 (complex-cartesian 0.0 0.0))
+              (if (number? u-val)
+                (/ (double u-val) r)
+                (mul u-val (complex-cartesian (/ 1.0 r) 0.0))))))
+        (range (count u-vec))
+        u-vec))
+
+(defn F-lsj-r-from-bound-reduced-u
+  "Radial **F_{ℓsj}(r)** (bound sector only) for **N. Austern** ZR **Eq. (5.3)** on **r = i·h**.
+
+  Builds **F(r) = R_{φ_f}^*(r) R_{φ_i}(r)** with **R(r) = u(r)/r** via **`radial-R-from-reduced-u`**.
+  Pass **φ_i**, **φ_f** as reduced **u = rR** from **`solve-bound-state-numerov`** at **E < 0** and
+  **`normalize-bound-state`**. Quantum numbers **(ℓ,s,j)** are **implicit** in which bound states you solved;
+  this function does not re-solve the Schrödinger equation.
+
+  **Not included:** **D₀**, distorted **χ**, or **Y_{ℓ}^{m*}(\\hat r)** — those enter the full 3D element
+  separately. Use the returned vector as **`F-vec`** in **`austern-radial-integrand-zr-F-Ra-Rb-r2`** /
+  **`austern-radial-integral-I-zr-eq-5-5-from-u`**.
+
+  **Returns:** vector **F(r_i)** for **i = 0 … n−1**, **n = min** lengths of **φ_i**, **φ_f**; entries are
+  complex-ready (real bound states → real **F**)."
+  [phi-i-reduced-u phi-f-reduced-u ^double h]
+  (let [Ri (radial-R-from-reduced-u phi-i-reduced-u h)
+        Rf (radial-R-from-reduced-u phi-f-reduced-u h)
+        n (min (count Ri) (count Rf))]
+    (mapv (fn [^long i]
+            (mul (complex-conjugate (get Rf i))
+                 (get Ri i)))
+          (range n))))
+
+(defn- transfer-radial-R-at-r-linear
+  "Linear interpolation of radial factor **R(r)** on uniform grid **r = i·h**.
+  **R-vec** entries are real or complex. **r** is clamped to **[0, (n−1)h]**."
+  [R-vec ^double h ^double r]
+  (let [n (count R-vec)]
+    (if (zero? n)
+      (complex-cartesian 0.0 0.0)
+      (let [r-max (* (double (dec n)) h)
+            r (max 0.0 (min r r-max))
+            f (/ r h)
+            i0 (long (Math/floor f))
+            i0 (max 0 (min i0 (dec n)))
+            i1 (min (dec n) (inc i0))
+            t (- f (double i0))
+            v0 (get R-vec i0)
+            v1 (get R-vec i1)
+            c0 (if (number? v0) (complex-cartesian (double v0) 0.0) v0)
+            c1 (if (number? v1) (complex-cartesian (double v1) 0.0) v1)]
+        (if (< (Math/abs t) 1e-15)
+          c0
+          (add (mul c0 (complex-cartesian (- 1.0 t) 0.0))
+               (mul c1 (complex-cartesian t 0.0))))))))
+
+;; ============================================================================
 ;; ZERO-RANGE AND FINITE-RANGE INTERACTIONS
 ;; ============================================================================
 
@@ -1159,34 +1233,52 @@
    For zero-range: T_post = D₀ · ∫ χ*_f(r) φ*_f(r) φ_i(r) χ_i(r) d³r
    
    For finite-range: T_post = ∫ χ*_f(r) V_transfer(r) φ*_f(r) φ_i(r) χ_i(r) d³r
+
+   **Austern (1970), Eq. (5.3) — ZR reduced amplitude volume element:** in zero-range DWBA the
+   double coordinate integral **(4.60)** collapses to **∫ d³r** in the **entrance** relative coordinate
+   **r**, with the **exit** distorted wave evaluated at **(M_A/M_B) r** (Austern’s mass ratio;
+   **M_B = M_A + M_x**). Pass **`:zr-chi-exit-mass-ratio`** `(M_A/M_B)` in the optional **opts** map
+   (9th argument). Default **1.0** recovers the legacy single-radius sampling **χ_f(r)**. See
+   `austern-zr-chi-exit-mass-ratio`.
    
    Parameters:
-   - chi-i: Distorted wave in entrance channel (vector)
-   - chi-f: Distorted wave in exit channel (vector)
-   - phi-i: Initial bound state wavefunction (vector)
-   - phi-f: Final bound state wavefunction (vector)
+   - chi-i, chi-f, phi-i, phi-f: **Reduced** radial functions u(r)=r·R(r) on grid r=i·h, as
+     produced by `distorted-wave-optical`, `solve-bound-state-numerov` + `normalize-bound-state`.
+     **φ_i**, **φ_f** are **bound** states (**negative** eigenenergy in the radial Schrödinger problem);
+     the radial **F_{ℓsj}(r)** factor is **`F-lsj-r-from-bound-reduced-u`** (**R_{φ_f}^* R_{φ_i}**).
+     **`transfer-amplitude-post`** uses that vector inside the ZR POST integrand (with **χ**, **D₀**, **r²**).
    - r-max: Maximum radius (fm)
    - h: Step size (fm)
    - interaction-type: :zero-range or :finite-range
    - interaction-params: Parameters for interaction
      - For zero-range: {:D0 value} or just D0 value
      - For finite-range: {:V0 value, :form-factor :yukawa/:gaussian, :range-param value}
+   - opts (optional): map with **`:zr-chi-exit-mass-ratio`** — used for **:zero-range** only
    
    Returns: Transfer amplitude T_post
    
-   Note: This is a simplified version. Full implementation would require
-   proper integration over all coordinates including angular parts."
-  [chi-i chi-f phi-i phi-f _r-max h interaction-type interaction-params]
-  (let [n (min (count chi-i) (count chi-f) (count phi-i) (count phi-f))
+   Note: Distorted waves are still max-normalized (see `distorted-wave-optical`); absolute
+   scale vs. unit-flux DWUCK may need asymptotic matching — but u→R fixes the dominant r-measure bug."
+  ([chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params]
+   (transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params {}))
+  ([chi-i chi-f phi-i phi-f _r-max h interaction-type interaction-params opts]
+  (let [ratio (double (or (:zr-chi-exit-mass-ratio opts) 1.0))
+        ratio-1? (< (Math/abs (- ratio 1.0)) 1e-14)
+        chi-i-R (radial-R-from-reduced-u chi-i h)
+        chi-f-R (radial-R-from-reduced-u chi-f h)
+        F-lsj (F-lsj-r-from-bound-reduced-u phi-i phi-f h)
+        n (min (count chi-i-R) (count chi-f-R) (count F-lsj))
         integrand (mapv (fn [i]
                          (let [r (* i h)
-                               chi-i-val (get chi-i i)
-                               chi-f-val (get chi-f i)
-                               phi-i-val (get phi-i i)
-                               phi-f-val (get phi-f i)
+                               chi-i-val (get chi-i-R i)
+                               chi-f-val (if (and ratio-1? (= :zero-range interaction-type))
+                                           (get chi-f-R i)
+                                           (if (= :zero-range interaction-type)
+                                             (transfer-radial-R-at-r-linear chi-f-R h (* ratio r))
+                                             (get chi-f-R i)))
+                               F-val (get F-lsj i)
                                ;; Compute conjugates (complex-conjugate works for both real and complex)
                                chi-f-conj (complex-conjugate chi-f-val)
-                               phi-f-conj (complex-conjugate phi-f-val)
                                ;; Transfer interaction
                                V-transfer (case interaction-type
                                             :zero-range (let [D0 (if (map? interaction-params)
@@ -1211,7 +1303,7 @@
                                            (complex-cartesian V-transfer 0.0)
                                            V-transfer)
                                  r-sq-complex (complex-cartesian r-squared 0.0)]
-                             (mul chi-f-conj V-complex phi-f-conj phi-i-val chi-i-val r-sq-complex))))
+                             (mul chi-f-conj V-complex F-val chi-i-val r-sq-complex))))
                        (range n)) ;integrand
         ;; Simpson's rule integration with complex numbers
         simpson-sum (loop [i 1 sum (complex-cartesian 0.0 0.0)]
@@ -1228,13 +1320,9 @@
         h-over-3-complex (complex-cartesian h-over-3 0.0)
         integral (mul h-over-3-complex
                      (add first-term last-term simpson-sum))]
-    ;; NOTE: The distorted waves (χ_i, χ_f) are normalized to max|χ| = 1,
-    ;; but for proper DWBA they should be normalized to unit incoming flux.
-    ;; This causes the transfer amplitude to be too large by many orders of magnitude.
-    ;; The proper normalization requires calculating the S-matrix and normalizing
-    ;; the asymptotic form χ(r) → (1/k) sin(kr + δ) to unit flux.
-    ;; TODO: Implement proper flux normalization for distorted waves in distorted-wave-optical
-    integral))
+    ;; Distorted u(r) are max-normalized, not unit asymptotic flux — remaining scale offset vs
+    ;; DWUCK is typically O(1–10²) unless we re-match χ to Coulomb/nuclear asymptotics.
+    integral)))
 
 (defn transfer-amplitude-prior
   "Calculate transfer amplitude in PRIOR formulation.
@@ -1245,15 +1333,16 @@
    The mathematical form is the same as post, but the physical interpretation
    is different. For exact calculations, T_post = T_prior (post-prior equivalence).
    
-   Parameters: Same as transfer-amplitude-post
+   Parameters: Same as `transfer-amplitude-post` (optional **opts** for **Austern (5.3)**).
    
    Returns: Transfer amplitude T_prior
    
    Note: For testing, you can verify that T_post ≈ T_prior numerically."
-  [chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params]
-  ;; Prior form is mathematically identical to post form
-  ;; The difference is in the physical interpretation of the interaction
-  (transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params))
+  ([chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params]
+   (transfer-amplitude-prior chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params {}))
+  ([chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params opts]
+   ;; Prior form is mathematically identical to post form
+   (transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params opts)))
 
 ;; ============================================================================
 ;; LOCAL ENERGY APPROXIMATION (LEA) WITH HULTHEN POTENTIAL
@@ -1642,8 +1731,11 @@
    momentum coupling between the initial and final states.
    
    For a transfer reaction with angular momentum transfer L:
-   dσ/dΩ(θ) ∝ Σ_L |w_L·T_L|² · |Y_L0(θ, 0)|². When l-i and l-f are given, w_L is the
-   selection weight (1 if L allowed, 0 if forbidden by triangle/parity), so some L dominate, others suppressed.
+   dσ/dΩ(θ) ∝ Σ_L |w_L·T_L|² · |Y_L0(θ, 0)|² (**incoherent** multipoles: no **L–L′** cross terms).
+   This is **not** isotropic when **several** **L** contribute — each term varies with **θ** via **|Y_L0|² ∝ P_L(cos θ)²**;
+   only the **interference** pattern differs from **`transfer-angular-distribution-coherent`**
+   (**|Σ_L w_L T_L Y_L0|²**). When l-i and l-f are given, w_L is the selection weight (1 if L allowed, 0 if forbidden
+   by triangle/parity), so some L dominate, others suppressed.
    
    Parameters:
    - T-amplitudes: Map of {L → T_L} transfer amplitudes for each angular momentum
@@ -1679,6 +1771,205 @@
                                      (* w w T-L-mag-squared Y-L0-mag-squared)))
                                  T-amplitudes))]
      sum-over-L)))
+
+(defn- transfer-cg-orbitals-exact
+  "Orbital Clebsch–Gordan **<l_i m_i L M | l_f m_f>** (integer **l**), exact via **`wigner-3j`**:
+
+  **<j1 m1 j2 m2 | j m>** = (−1)^{j1−j2+m} √(2j+1) **(j1 j2 j; m1 m2 −m)**."
+  [l-i m-i L M l-f m-f]
+  (let [l-i (long l-i) m-i (long m-i) L (long L) M (long M) l-f (long l-f) m-f (long m-f)]
+    (if (not= (+ m-i M) m-f)
+      0.0
+      (let [phase (if (even? (+ l-i (- L) m-f)) 1.0 -1.0)
+            pref (* phase (Math/sqrt (double (inc (* 2 l-f)))))
+            w3 (jam/wigner-3j (double l-i) (double L) (double l-f)
+                 (double m-i) (double M) (double (- m-f)))]
+        (* pref w3)))))
+
+(defn transfer-orbital-cg-bilinear-sum-mi
+  "**Scalar recoupling factor** **S(L,L′) = Σ_{m_i} <l_i m_i L M | l_f m_i+M> <l_i m_i L′ M | l_f m_i+M>**
+  with integer orbitals **l_i, l_f, L, L′** and **exact** orbital CGs (`transfer-cg-orbitals-exact` / **3j**).
+
+  For allowed triangles this sum is **independent of M** (standard angular-momentum recoupling); it is
+  evaluated at **M = 0** for efficiency. Equivalent to a **6j**-type contraction of four **3j** symbols
+  (Varshalovich *et al.*; DLMF §34.3 orthogonality sums).
+
+  Returns a **real double** (0 when no **m_i** contributes)."
+  [l-i L L-prime l-f]
+  (let [l-i (long l-i) L (long L) Lp (long L-prime) l-f (long l-f)
+        M 0]
+    (double
+     (reduce
+      (fn [^double acc ^long m-i]
+        (let [m-f (+ m-i M)]
+          (if (> (Math/abs m-f) l-f)
+            acc
+            (let [cg1 (transfer-cg-orbitals-exact l-i m-i L M l-f m-f)
+                  cg2 (transfer-cg-orbitals-exact l-i m-i Lp M l-f m-f)]
+              (+ acc (* (double cg1) (double cg2)))))))
+      0.0
+      (range (- l-i) (inc l-i))))))
+
+(defn- transfer-Ylm-bilinear-sum-over-M
+  "**χ_{L,L′}(θ,φ) = Σ_M Y_{LM}(θ,φ) Y*_{L′M}(θ,φ)** over **M** with **|M| ≤ min(L,L′)** (complex)."
+  [^long L ^long L-prime theta phi]
+  (let [mmax (min L L-prime)]
+    (reduce
+     (fn [acc ^long M]
+       (let [y1 (spherical-harmonic L M theta phi)
+             y2 (spherical-harmonic L-prime M theta phi)]
+         (add acc (mul y1 (complex-conjugate y2)))))
+     (complex-cartesian 0.0 0.0)
+     (range (- mmax) (inc mmax)))))
+
+(defn- transfer-T->complex [T-L]
+  (if (number? T-L)
+    (complex-cartesian (double T-L) 0.0)
+    T-L))
+
+(defn- transfer-angular-distribution-m-sum-unpolarized-legacy-mi-mf
+  "Reference implementation: double loop over **m_i**, **m_f** (for regression tests only)."
+  [T-amplitudes theta phi l-i l-f]
+  (let [theta (double theta)
+        phi (double phi)
+        weight-fn (fn [^long L] (transfer-L-selection-weight L l-i l-f))
+        t-entries (sort-by first (or (seq T-amplitudes) []))
+        norm-i (double (inc (* 2 l-i)))
+        mis (range (- l-i) (inc l-i))
+        mfs (range (- l-f) (inc l-f))
+        amp-for-pair
+        (fn [^long m-i ^long m-f]
+          (let [M (- m-f m-i)]
+            (reduce
+             (fn [acc [L T-L]]
+               (let [L (long L)
+                     w (double (weight-fn L))]
+                 (if (< (Math/abs w) 1e-15)
+                   acc
+                   (if (> (Math/abs M) L)
+                     acc
+                     (let [cg (transfer-cg-orbitals-exact l-i m-i L M l-f m-f)]
+                       (if (< (Math/abs cg) 1e-15)
+                         acc
+                         (let [Ylm (spherical-harmonic L M theta phi)
+                               T-c (transfer-T->complex T-L)
+                               wc (complex-cartesian (* w cg) 0.0)
+                               term (mul T-c (mul wc Ylm))]
+                           (add acc term))))))))
+             (complex-cartesian 0.0 0.0)
+             t-entries)))
+        mag2 (fn [z] (+ (* (re z) (re z)) (* (im z) (im z))))
+        sum-m (reduce
+               (fn [^double s [^long mi ^long mf]]
+                 (+ s (mag2 (amp-for-pair mi mf))))
+               0.0
+               (for [mi mis mf mfs] [mi mf]))]
+    (max 0.0 (/ sum-m norm-i))))
+
+(defn transfer-angular-distribution-m-sum-unpolarized
+  "Unpolarized **orbital** angular factor: **(1/(2l_i+1)) Σ_{m_i,m_f} |A(m_i,m_f)|²** with
+
+  **A(m_i,m_f) = Σ_L w_L · T_L · <l_i m_i L (m_f−m_i) | l_f m_f> · Y_{L,(m_f−m_i)}(θ,φ)**.
+
+  **w_L** = `transfer-L-selection-weight`. CGs use **`dwba.angular-momentum` / Wigner 3j**.
+
+  **Legendre vs m-sum:** For each **l**, **Y_{l0}(θ) ∝ P_l(cos θ)** (φ=0, real). The **unpolarized**
+  sum that enters here is **(1/(2l_i+1)) Σ_{m_i,m_f} |A|²**; for **l_i=0** it collapses to a factor times
+  **Σ_m |Y_{l_f m}(θ)|²** at a **single** θ. By the **addition theorem**, **Σ_m |Y_{l_f m}(θ,φ)|² =
+  (2l_f+1)/(4π)** for **all** θ — that is **not** **P_{l_f}(cos θ)**; the **P_l** dependence cancels
+  when you add **all** **m** at one point. (Contrast: **Σ_m Y*_{lm}(θ')Y_{lm}(θ) = ((2l+1)/4π) P_l(cos γ)**,
+  two directions **γ** apart — that **is** **P_l**, but a different object than **Σ_m |Y_lm(θ)|²**.)
+  So for **l_i=0** this path is **|w T_{l_f}|² (2l_f+1)/(4π)**, **θ-flat**. For **θ** shape from **P_L**
+  in a reduced model use **`transfer-angular-distribution-coherent`** (**Y_L0** only, i.e. **|Σ w T Y_L0|² ∝ |P_L|²**).
+
+  **l_i ≥ 1 — recoupled (same algebra as DWUCK-style m-averages):** factor
+  **Σ_{m_i} |A|² = Σ_{L,L′} w_L w_{L′} T_L T_{L′}* S(L,L′) χ_{L,L′}(θ,φ)** for fixed **M = m_f−m_i**, with
+  **S(L,L′) = `transfer-orbital-cg-bilinear-sum-mi`** and **χ_{L,L′} = Σ_M Y_{LM} Y*_{L′M}**
+  (internal **χ** sum over **M**). No double loop over **(m_i,m_f)**; unit tests match the legacy
+  **m_i**, **m_f** implementation to round-off.
+
+  **Parameters:** `T-amplitudes` map **{L → T_L}**; **l-i**, **l-f** integer bound orbitals (required).
+  **theta**, **phi** unused when **l_i=0**."
+  [T-amplitudes theta phi l-i l-f]
+  (let [l-i (long l-i)
+        l-f (long l-f)]
+    (if (zero? l-i)
+      (let [w (double (transfer-L-selection-weight l-f l-i l-f))
+            T-L (get T-amplitudes l-f)]
+        (if (or (< (Math/abs w) 1e-15) (nil? T-L))
+          0.0
+          (let [T-mag-sq (if (number? T-L)
+                          (let [x (double T-L)] (* x x))
+                          (+ (* (re T-L) (re T-L)) (* (im T-L) (im T-L))))]
+            (max 0.0 (* w w T-mag-sq (/ (double (inc (* 2 l-f))) (* 4.0 Math/PI)))))))
+      (let [theta (double theta)
+            phi (double phi)
+            weight-fn (fn [^long L] (transfer-L-selection-weight L l-i l-f))
+            t-entries (sort-by first (or (seq T-amplitudes) []))
+            norm-i (double (inc (* 2 l-i)))
+            zsum
+            (reduce
+             (fn [acc [[L T-L] [Lp T-Lp]]]
+               (let [L (long L) Lp (long Lp)
+                     wL (double (weight-fn L))
+                     wLp (double (weight-fn Lp))]
+                 (if (or (< (Math/abs wL) 1e-15) (< (Math/abs wLp) 1e-15))
+                   acc
+                   (let [Sbf (transfer-orbital-cg-bilinear-sum-mi l-i L Lp l-f)
+                         chi (transfer-Ylm-bilinear-sum-over-M L Lp theta phi)
+                         TLC (transfer-T->complex T-L)
+                         TLpC (transfer-T->complex T-Lp)
+                         ;; wL wLp S T_L T_L'* χ
+                         pref (complex-cartesian (* wL wLp Sbf) 0.0)
+                         tprod (mul TLC (complex-conjugate TLpC))
+                         term (mul pref (mul tprod chi))]
+                     (add acc term)))))
+             (complex-cartesian 0.0 0.0)
+             (for [a t-entries b t-entries] [a b]))
+            q (re zsum)]
+        (max 0.0 (/ (double q) norm-i))))))
+
+(defn transfer-angular-distribution-coherent
+  "Coherent DWBA-style multipole sum (coplanar, m = 0 only), then square:
+
+  dσ/dΩ ∝ | Σ_L w_L · T_L · Y_L0(θ,φ) |²
+
+  where w_L = `transfer-L-selection-weight` when `l-i` and `l-f` are supplied, else 1.
+  For **l_i=0** the strict **`transfer-angular-distribution-m-sum-unpolarized`** factor is **θ-flat**;
+  Ca40 benchmark uses **this** coherent path for a **shaped** σ(θ).
+
+  **CM symmetry (θ ↔ π−θ):** With φ=0, **Y_{L0} ∝ P_L(cos θ)**. Parity-conserving transfer forces every
+  allowed **L** to share the same parity **(−1)^L = (−1)^{l_f−l_i}**, so
+  **f(θ)=Σ_L c_L P_L(cos θ)** obeys **f(π−θ)=(−1)^{l_f−l_i} f(θ)** and **|f(θ)|² = |f(π−θ)|²** even when
+  **c_L** are **complex**. So this **Y_L0-only** angular factor is always **symmetric** about **θ=90°** CM for
+  one-step transfer. **Incoherent** **Σ_L |w T Y_L0|²** is symmetric term-by-term. **Asymmetry** (DWUCK-style)
+  needs **m≠0** physics via **`transfer-angular-distribution-m-sum-unpolarized`** (and **l_i≥1** with several
+  multipoles — see its docstring); that path is **θ-flat** when **l_i=0**."
+  ([T-amplitudes theta]
+   (transfer-angular-distribution-coherent T-amplitudes theta 0.0 nil nil))
+  ([T-amplitudes theta phi]
+   (transfer-angular-distribution-coherent T-amplitudes theta phi nil nil))
+  ([T-amplitudes theta phi l-i l-f]
+   (let [weight-fn (if (and (number? l-i) (number? l-f))
+                     (fn [L] (transfer-L-selection-weight L (long l-i) (long l-f)))
+                     (fn [_L] 1.0))
+         sum-amp
+         (reduce
+          (fn [acc [L T-L]]
+            (let [w (double (weight-fn L))]
+              (if (< (Math/abs w) 1e-15)
+                acc
+                (let [Y-L0 (spherical-harmonic (long L) 0 theta phi)
+                      T-c (if (number? T-L)
+                            (complex-cartesian (double T-L) 0.0)
+                            T-L)
+                      w-c (complex-cartesian w 0.0)
+                      term (mul T-c (mul w-c Y-L0))]
+                  (add acc term)))))
+          (complex-cartesian 0.0 0.0)
+          (sort-by first (or (seq T-amplitudes) [])))]
+     (+ (* (re sum-amp) (re sum-amp))
+        (* (im sum-amp) (im sum-amp))))))
 
 (defn transfer-angular-distribution-function
   "Calculate angular distribution as a function of angle.
@@ -1778,7 +2069,7 @@
    - E-i: Incident energy (MeV) - for documentation/validation
    - E-f: Final energy (MeV) - for documentation/validation
    
-   Returns: dσ/dΩ in fm²/sr (can be converted to mb/sr by multiplying by 10)."
+   Returns: dσ/dΩ in **mb/sr** (1 fm² = 10 mb; internal kinematic result × 10)."
   ([T-amplitude S-factor k-i k-f mass-factor-i mass-factor-f]
    (transfer-differential-cross-section T-amplitude S-factor k-i k-f mass-factor-i mass-factor-f nil nil))
   ([T-amplitude S-factor k-i k-f mass-factor-i mass-factor-f _E-i _E-f]
@@ -1792,7 +2083,7 @@
                     (* T-amplitude T-amplitude)
                     (let [T-mag-val (mag T-amplitude)]
                       (* T-mag-val T-mag-val)))]
-     (* prefactor k-ratio T-squared S-factor))))
+     (* 10.0 prefactor k-ratio T-squared S-factor))))
 
 (defn transfer-differential-cross-section-angular
   "Calculate differential cross-section as a function of angle.
@@ -1812,7 +2103,7 @@
    - mass-factor-f: Exit channel mass factor (2μ_f/ħ²)
    - phi: Azimuthal angle (radians, default 0)
    
-   Returns: dσ/dΩ(θ) in fm²/sr (CM frame). Use transfer-cm-to-lab to convert to lab.
+   Returns: dσ/dΩ(θ) in **mb/sr** (CM frame). Use transfer-cm-to-lab to convert to lab.
    
    Example:
    (let [T-map {0 1.0, 1 0.5, 2 0.2}
@@ -1834,9 +2125,81 @@
                      (* 16.0 Math/PI Math/PI))
          ;; Wavenumber ratio: k_f/k_i
          k-ratio (/ k-f k-i)
-         ;; Multiply all factors: (μ_i μ_f/(2πħ²)²) · (k_f/k_i) · angular_dist · S
-         dsigma (* prefactor k-ratio angular-dist S-factor)]
+         ;; Multiply all factors: (μ_i μ_f/(2πħ²)²) · (k_f/k_i) · angular_dist · S → mb/sr
+         dsigma (* 10.0 prefactor k-ratio angular-dist S-factor)]
      dsigma)))
+
+(defn transfer-differential-cross-section-angular-coherent
+  "Like `transfer-differential-cross-section-angular` but uses
+  `transfer-angular-distribution-coherent` (interference between multipoles)."
+  ([T-amplitudes S-factor k-i k-f theta mass-factor]
+   (transfer-differential-cross-section-angular-coherent T-amplitudes S-factor k-i k-f theta mass-factor mass-factor))
+  ([T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f]
+   (transfer-differential-cross-section-angular-coherent T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f 0.0 nil nil))
+  ([T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f phi]
+   (transfer-differential-cross-section-angular-coherent T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f phi nil nil))
+  ([T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f phi l-i l-f]
+   (let [angular-dist (transfer-angular-distribution-coherent T-amplitudes theta phi l-i l-f)
+         prefactor (/ (* mass-factor-i mass-factor-f)
+                      (* 16.0 Math/PI Math/PI))
+         k-ratio (/ k-f k-i)
+         dsigma (* 10.0 prefactor k-ratio angular-dist S-factor)]
+     dsigma)))
+
+(defn transfer-differential-cross-section-angular-m-sum
+  "Like `transfer-differential-cross-section-angular-coherent` but uses
+  `transfer-angular-distribution-m-sum-unpolarized` (exact orbital CGs; **l_i≥1** via **S(L,L′)** recoupling
+  and **χ_{L,L′} = Σ_M Y_{LM} Y*_{L′M}**, same algebra as explicit **m_i**, **m_f** average)."
+  ([T-amplitudes S-factor k-i k-f theta mass-factor]
+   (transfer-differential-cross-section-angular-m-sum T-amplitudes S-factor k-i k-f theta mass-factor mass-factor))
+  ([T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f]
+   (transfer-differential-cross-section-angular-m-sum T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f 0.0 nil nil))
+  ([T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f phi]
+   (transfer-differential-cross-section-angular-m-sum T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f phi nil nil))
+  ([T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f phi l-i l-f]
+   (let [angular-dist (transfer-angular-distribution-m-sum-unpolarized T-amplitudes theta phi l-i l-f)
+         prefactor (/ (* mass-factor-i mass-factor-f)
+                      (* 16.0 Math/PI Math/PI))
+         k-ratio (/ k-f k-i)
+         dsigma (* 10.0 prefactor k-ratio angular-dist S-factor)]
+     dsigma)))
+
+;; -----------------------------------------------------------------------------
+;; Point-charge **elastic** Rutherford (optional reference / ratios only — not used in transfer DWBA)
+;;
+;; Single-nucleon **transfer** dσ/dΩ uses `distorted-wave-optical` (Coulomb + nuclear in χ), radial
+;; POST integrals, and an angular factor (coherent multipole or orbital m-sum — see `dwba.benchmark.ca40-dwuck`) — no
+;; separate “Coulomb tail” on σ.
+;; -----------------------------------------------------------------------------
+
+(def ^:private transfer-coulomb-e2-mev-fm
+  "Coulomb constant **e²** in **MeV·fm** (same convention as optical / examples)."
+  1.44)
+
+(def ^:private transfer-rutherford-theta-floor-rad
+  "Minimum CM **θ** (rad) for analytic **1/sin⁴(θ/2)** so θ→0 stays finite (~2°)."
+  (* 2.0 (/ Math/PI 180.0)))
+
+(defn- transfer-rutherford-effective-theta-rad
+  ^double [^double theta-rad]
+  (let [t (Math/abs (double theta-rad))
+        lo transfer-rutherford-theta-floor-rad]
+    (if (< t lo) lo t)))
+
+(defn transfer-rutherford-dsigma-mb-sr
+  "Point-charge **elastic** Rutherford **dσ/dΩ** in **mb/sr**, non-relativistic CM:
+  **(Z₁ Z₂ e² / (4 E_cm))² / sin⁴(θ/2)**, then ×10 (**fm²/sr → mb/sr**). For **elastic** comparisons
+  only — **transfer** DWBA does not add this to stripping/pickup σ.
+
+  **θ** in radians. Below **`transfer-rutherford-theta-floor-rad`** (~2°), **θ** is floored so the
+  pole at θ→0 is finite."
+  [Z1 Z2 ^double e-cm-mev ^double theta-rad]
+  (let [e2 transfer-coulomb-e2-mev-fm
+        zze (* (double Z1) (double Z2) e2)
+        th (transfer-rutherford-effective-theta-rad theta-rad)
+        s (max 1e-15 (Math/abs (Math/sin (* 0.5 th))))
+        p (/ zze (* 4.0 e-cm-mev))]
+    (* 10.0 (/ (* p p) (* s s s s)))))
 
 ;; -----------------------------------------------------------------------------
 ;; Nuclear spin / j-coupling for single-nucleon transfer (optional on top of |T|² × S)
@@ -1880,6 +2243,293 @@
         rec (* (inc (* 2.0 (double j))) (* sixj sixj))]
     (* stat d-fac rec)))
 
+(defn- transfer-imaginary-unit-to-integer-power
+  "i^ℓ for integer ℓ (Edmonds / Austern phase)."
+  [^long ell]
+  (case (Math/floorMod ell 4)
+    0 (complex-cartesian 1.0 0.0)
+    1 (complex-cartesian 0.0 1.0)
+    2 (complex-cartesian -1.0 0.0)
+    3 (complex-cartesian 0.0 -1.0)))
+
+(defn austern-zr-chi-exit-mass-ratio
+  "Mass ratio **M_A/M_B** for **N. Austern**, *Direct Nuclear Reaction Theories*, **Eq. (5.3)**.
+  After the zero-range δ-contraction, the volume integral is **∫ d³ r** in the **entrance**
+  relative coordinate **r**, with the **exit** distorted wave **χ_β^{(-)}** sampled at
+  **(M_A/M_B) r** (often **M_B = M_A + M_x**, residual = core + transferred cluster). Masses in
+  any consistent units (e.g. MeV/c²).
+
+  Pass as **`:zr-chi-exit-mass-ratio`** to `transfer-amplitude-post` (**`:zero-range` only**)."
+  [M-A M-B]
+  (/ (double M-A) (double M-B)))
+
+(defn- austern-real-scalar
+  ^double [x]
+  (if (number? x) (double x) (double (re x))))
+
+(defn- austern-radial-simpson-integrate-real
+  "Composite Simpson's rule, uniform **h**, real samples **f(i·h)**, **i = 0 … n−1**."
+  ^double [^double h integrand-vec]
+  (let [n (count integrand-vec)]
+    (cond
+      (zero? n) 0.0
+      (= n 1) (* h (austern-real-scalar (first integrand-vec)))
+      :else
+      (let [simpson-sum (loop [i 1 sum 0.0]
+                          (if (>= i (dec n))
+                            sum
+                            (let [coeff (if (odd? i) 4.0 2.0)
+                                  term (* coeff (austern-real-scalar (get integrand-vec i)))]
+                              (recur (inc i) (+ sum term)))))
+            h3 (/ h 3.0)
+            f0 (austern-real-scalar (first integrand-vec))
+            fl (austern-real-scalar (nth integrand-vec (dec n)))]
+        (* h3 (+ f0 fl simpson-sum))))))
+
+(defn austern-radial-integral-prefactor-eq-5-5
+  "Prefactor **(M_B/M_A)(4π/(k_α k_β))** from **N. Austern**, **Eq. (5.5)**.
+  **M_B = M_A + M_x** in the book; **k_α**, **k_β** in **fm⁻¹** (same convention as your radial waves)."
+  ^double [^double M-A ^double M-B ^double k-alpha ^double k-beta]
+  (* (/ M-B M-A) (* 4.0 Math/PI) (/ 1.0 (* k-alpha k-beta))))
+
+(defn austern-radial-integral-I-Lb-La-eq-5-5
+  "Radial integral **I_{L_β L_α}^{ℓsj}** from **N. Austern**, *Direct Nuclear Reaction Theories*,
+  **Eq. (5.5)**:
+
+  \\[
+  I_{L_\\beta L_\\alpha}^{\\ell s j}
+  = \\frac{M_B}{M_A}\\,\\frac{4\\pi}{k_\\alpha k_\\beta}
+  \\int_0^\\infty \\mathrm{d}r\\,
+  F_{\\ell s j}(r)\\,
+  f_{\\beta L_\\beta}\\!\\left(k_\\beta,\\frac{M_A}{M_B}r\\right)\\,
+  f_{\\alpha L_\\alpha}(k_\\alpha,r) \\, .
+  \\]
+
+  Pass **integrand-real-vec** with entry **i** = **F(r_i) f_β((M_A/M_B)r_i) f_α(r_i)** at **r_i = i·h**
+  (the **integrand** of the book's **dr** integral — **not** necessarily including **r²**; see below).
+
+  **Convention bridge:** partial-wave codes often reduce **∫ d³r** to **4π ∫ R_β R_α r² dr** for fixed
+  **(L_α,L_β)**. If your **f_α, f_β** are those **R** factors, use **`austern-radial-integrand-zr-F-Ra-Rb-r2`**
+  and then this function. If your optical code defines **f** differently (e.g. **u/(kr)**), fold that
+  into **integrand-real-vec** before calling here.
+
+  **Returns:** real **I** for use in `austern-reduced-amplitude-beta-sum-eq-5-6`."
+  [integrand-real-vec h M-A M-B k-alpha k-beta]
+  {:pre [(sequential? integrand-real-vec)
+         (every? number? [h M-A M-B k-alpha k-beta])
+         (pos? (double k-alpha))
+         (pos? (double k-beta))]}
+  (* (austern-radial-integral-prefactor-eq-5-5 (double M-A) (double M-B)
+      (double k-alpha) (double k-beta))
+     (austern-radial-simpson-integrate-real (double h) integrand-real-vec)))
+
+(defn austern-radial-integrand-zr-F-Ra-Rb-r2
+  "Per-point samples **F(r) R_α(r) R_β((M_A/M_B) r) r²** on **r = i·h**, real-valued.
+  **u_α**, **u_β** are reduced radial waves (**u=rR**) as in `distorted-wave-optical` /
+  `transfer-amplitude-post`. **R_β** is linearly interpolated at the scaled radius.
+  **zr-mass-ratio** = **M_A/M_B** (same as **`:zr-chi-exit-mass-ratio`** / `austern-zr-chi-exit-mass-ratio`)."
+  [F-vec u-alpha u-beta h zr-mass-ratio]
+  (let [h* (double h)
+        rho (double zr-mass-ratio)
+        Ra (radial-R-from-reduced-u u-alpha h*)
+        Rb (radial-R-from-reduced-u u-beta h*)
+        n (min (count F-vec) (count Ra) (count Rb))]
+    (mapv (fn [^long i]
+            (let [r (* (double i) h*)
+                  fa (austern-real-scalar (get Ra i))
+                  fb-raw (transfer-radial-R-at-r-linear Rb h* (* rho r))
+                  fb (austern-real-scalar fb-raw)
+                  Fi (austern-real-scalar (get F-vec i))
+                  rsq (* r r)]
+              (* Fi fa fb rsq)))
+          (range n))))
+
+(defn austern-radial-integral-I-zr-eq-5-5-from-u
+  "Convenience: **(5.5)** with ZR integrand **F R_α R_β r²** built from reduced **u** grids
+  (**one** entrance partial wave **L_α**, **one** exit **L_β**). Pass **F_{ℓsj}(r)** on the same grid."
+  [F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
+  (let [integrand (austern-radial-integrand-zr-F-Ra-Rb-r2
+                    F-vec u-alpha u-beta (double h) (double zr-mass-ratio))]
+    (austern-radial-integral-I-Lb-La-eq-5-5 integrand h M-A M-B k-alpha k-beta)))
+
+(defn austern-reduced-amplitude-beta-sj-ellm
+  "Reduced amplitude **β_{sj}^{ℓm}** exactly as **N. Austern**, *Direct Nuclear Reaction
+  Theories* (Wiley, 1970), **Eq. (4.60), p. 84**:
+
+  \\[
+  (2\\ell+1)^{1/2}\\, i^{\\ell}\\, \\beta_{sj}^{\\ell m}
+  = \\int \\mathrm{d}^3 r_\\alpha \\int \\mathrm{d}^3 r_\\beta\\,
+  \\chi_\\beta^{(-)*}(\\mathbf{k}_\\beta, \\mathbf{r}_\\beta)\\,
+  f_{\\ell s j,\\,m}(\\mathbf{r}_\\beta, \\mathbf{r}_\\alpha)\\,
+  \\chi_\\alpha^{(+)}(\\mathbf{k}_\\alpha, \\mathbf{r}_\\alpha) \\, .
+  \\]
+
+  **Zero-range (Eq. (5.3)):** the same left-hand side equals **∫ d³ r χ_β^*((M_A/M_B)\\mathbf r)
+  F_{\\ell sj}(r) Y_{\\ell}^{m*}(\\hat r) χ_α(\\mathbf r)** (Austern’s notation). The **bound** radial
+  content in **F_{ℓsj}** comes from single-particle wavefunctions that solve the **Schrödinger equation at
+  negative energy** (bound states in the optical / shell well). In this codebase, **φ_i** and **φ_f** in
+  `transfer-amplitude-post` are those solutions (**`solve-bound-state-numerov`** at **E < 0**, then
+  **`normalize-bound-state`**), carried as reduced **u = rR** and converted to **R** inside the overlap;
+  angular **Y_{ℓm}** and full **f_{ℓsj,m}** structure are not expanded explicitly in that shortcut — only
+  the chosen partial wave and overlap enter through the bound **R_φ** factors and **D₀**.
+
+  **Partial-wave / angle (5.6):** after radial integrals **I_{L_β L_α}** **(5.5)** are known,
+  **`austern-reduced-amplitude-beta-sum-eq-5-6`** evaluates **(5.6)** in the standard coplanar
+  frame (**ẑ ‖ k_α**). Each **(L_α, L_β)** term carries **Y_{L_β}^{-m}(Θ, 0)** (Austern’s **Θ** between
+  **k_α** and **k_β**). It is simpler than **(5.4)** (no **M_α**, **M_β** sums) but still requires
+  that radial table and consistent **σ_{αL}**, **σ_{βL}**.
+
+  **No Clebsch–Gordan factors** appear in (4.60); those enter the DW amplitude **T** in
+  **Eq. (4.59)** — use `austern-dw-transition-amplitude-T-term-4-59`.
+
+  **Parameters:** **ℓ** = orbital **l** in the book; **m** = projection on **f_{ℓsj,m}**;
+  **s, j** label the multipole (book subscript on **β**); **I** = value of the double
+  integral (4.60), or the single volume integral (5.3) in ZR — typically from your DWBA radial code.
+
+  **Returns:** complex **β_{sj}^{ℓm} = I / (√(2ℓ+1) · i^ℓ)**."
+  [ell m-ell s j I]
+  {:pre [(every? number? [ell m-ell s j])]}
+  (let [Ic (if (number? I) (complex-cartesian (double I) 0.0) I)
+        sqrt-2l1 (Math/sqrt (inc (* 2.0 (double ell))))
+        denom (mul (complex-cartesian sqrt-2l1 0.0)
+                   (transfer-imaginary-unit-to-integer-power (long ell)))]
+    (div Ic denom)))
+
+(defn austern-reduced-amplitude-beta-sum-eq-5-6
+  "Partial-wave form of **β_{sj}^{ℓm}** from **N. Austern**, *Direct Nuclear Reaction Theories*,
+  **Eq. (5.6)** — simpler than **(5.4)** because the **z**-axis is along **k_α** and **y** along
+  **k_α × k_β**, so **k_β** lies in the **x–z** plane at polar angle **Θ** (CM angle between
+  **k_α** and **k_β**).
+
+  \\[
+  \\beta_{sj}^{\\ell m}
+  = \\sum_{L_\\alpha,\\,L_\\beta}
+  i^{L_\\alpha - L_\\beta - \\ell}\\,
+  e^{i(\\sigma_{\\alpha L_\\alpha} + \\sigma_{\\beta L_\\beta})}\\,
+  \\sqrt{2L_\\beta+1}\\,
+  I_{L_\\beta L_\\alpha}^{\\ell s j}\\,
+  \\langle L_\\beta \\ell; 0, 0 \\,|\\, L_\\alpha\\, 0 \\rangle\\,
+  \\langle L_\\beta \\ell; -m,\\, m \\,|\\, L_\\alpha\\, 0 \\rangle\\,
+  Y_{L_\\beta}^{-m}(\\Theta,\\, 0) \\, .
+  \\]
+
+  **Angular piece (your Eq. (5.6) reading):** For each **(L_α, L_β)** pair, the contribution to
+  **β_{sj}^{ℓm}** is proportional to **Y_{L_β}^{-m}(Θ, 0)** — same **Θ** as above, **φ = 0** (coplanar;
+  **ẑ ‖ k_α**, **k_β** in the **x–z** plane). Implementation: **`spherical-harmonic` L_β (−m) Θ 0**. The full
+  **β^{ℓm}(Θ)** is the **sum** over **L_α, L_β** of that factor times **I**, **√(2L_β+1)**, the two CGs,
+  and **i^{L_α−L_β−ℓ} e^{i(σ_{αL_α}+σ_{βL_β})}**.
+
+  **When to use:** Yes — **(5.6)** is the right angular reduction **once** you supply **I_{L_β L_α}**
+  from **Eq. (5.5)** (radial factors **f_{α L_α}**, **f_{β L_β}**, **F_{ℓsj}**, and the **M_B/M_A**
+  prefactor there). It is **not** a substitute for that radial work: it removes the **M_α**, **M_β**
+  sums of **(5.4)** only. You still need **σ_{α L}**, **σ_{β L}** consistent with your distorted waves
+  (Coulomb ± nuclear, same convention as the code that produces **f**).
+
+  **radial-rows** — collection of maps **`{:L-alpha :L-beta :I :sigma-alpha :sigma-beta}`**:
+  **:I** = **I_{L_β L_α}^{ℓsj}**; **σ** in **radians**. Optional **σ** default to **0**.
+
+  **Clebsch–Gordan:** `clebsch-gordan-exact` **⟨j₁m₁ j₂m₂|j₃m₃⟩**. **Y:** `spherical-harmonic`.
+
+  **Returns:** complex **β_{sj}^{ℓm}** (same object as in **(4.59)** — **s**, **j** are implicit in each **I**)."
+  [ell m-ell theta-rad radial-rows]
+  {:pre [(every? number? [ell m-ell theta-rad]) (sequential? radial-rows)]}
+  (let [l (double ell)
+        mproj (double m-ell)
+        th (double theta-rad)]
+    (reduce
+     (fn [acc row]
+       (let [L-a (double (:L-alpha row))
+             L-b (double (:L-beta row))
+             Ival (:I row)
+             sa (double (or (:sigma-alpha row) 0.0))
+             sb (double (or (:sigma-beta row) 0.0))
+             ;; ⟨L_β 0; ℓ 0 | L_α 0⟩,  ⟨L_β −m; ℓ m | L_α 0⟩
+             cg0 (jam/clebsch-gordan-exact L-b 0.0 l 0.0 L-a 0.0)
+             cgm (jam/clebsch-gordan-exact L-b (- mproj) l mproj L-a 0.0)
+             La (long (Math/round L-a))
+             Lb (long (Math/round L-b))
+             ll (long (Math/round l))
+             mm (long (Math/round mproj))]
+         (if (< (+ (Math/abs cg0) (Math/abs cgm)) 1e-20)
+           acc
+           (let [pow (Math/floorMod (- La Lb ll) 4)
+                 iphase (transfer-imaginary-unit-to-integer-power pow)
+                 eph (complex-polar (+ sa sb) 1.0)
+                 sqrt2lb (Math/sqrt (inc (* 2.0 L-b)))
+                 ybm (spherical-harmonic Lb (- mm) th 0.0)
+                 Ic (if (number? Ival) (complex-cartesian (double Ival) 0.0) Ival)
+                 pref (complex-cartesian (* sqrt2lb (double cg0) (double cgm)) 0.0)
+                 term (mul iphase eph pref Ic ybm)]
+             (add acc term)))))
+     (complex-cartesian 0.0 0.0)
+     radial-rows)))
+
+(defn austern-dw-transition-amplitude-T-term-4-59
+  "One **(ℓ,s,j)** contribution to the distorted-wave amplitude **T_{αβ}^{DW}** from
+  **Austern**, **Eq. (4.59), p. 84**:
+
+  \\[
+  T = \\sum_{\\ell,s,j} (2\\ell+1)^{1/2} A_{\\ell s j}\\, (-)^{s_b - m_b}\\,
+  \\langle J_A\\, j;\\, M_A,\\, M_B - M_A \\,|\\, J_B\\, M_B \\rangle\\,
+  \\langle \\ell\\, s;\\, m,\\, m_a - m_b \\,|\\, j,\\, m - m_b + m_a \\rangle\\,
+  \\langle s_a\\, s_b;\\, m_a,\\, -m_b \\,|\\, s,\\, m_a - m_b \\rangle\\,
+  \\beta_{sj}^{\\ell m} \\, .
+  \\]
+
+  Pass **beta** = **β_{sj}^{ℓm}** from `austern-reduced-amplitude-beta-sj-ellm`. **A-lsj** is
+  the dynamical factor **A_{ℓsj}** in the book. **Clebsch–Gordan** via
+  `clebsch-gordan-exact` (Edmonds **⟨j₁m₁ j₂m₂|j₃m₃⟩** order).
+
+  **Note:** **(2ℓ+1)^{1/2} β** = **I/i^ℓ** from (4.60), so this term could also be written as
+  **A (-)^{s_b-m_b} (CG_J)(CG_{ℓs})(CG_{ss}) I / i^ℓ** (the **√(2ℓ+1)** cancels)."
+  [A-lsj ell m-ell s j J-A M-A J-B M-B s-a m-a s-b m-b beta]
+  (let [beta-c (if (number? beta) (complex-cartesian (double beta) 0.0) beta)
+        phase (Math/pow -1.0 (- (double s-b) (double m-b)))
+        sqrt-2l1 (Math/sqrt (inc (* 2.0 (double ell))))
+        ;; ⟨J_A j; M_A, M_B - M_A | J_B M_B⟩
+        cg-J (jam/clebsch-gordan-exact (double J-A) (double M-A) (double j)
+               (- (double M-B) (double M-A)) (double J-B) (double M-B))
+        ;; ⟨ℓ s; m, m_a - m_b | j, m - m_b + m_a⟩
+        cg-ls (jam/clebsch-gordan-exact (double ell) (double m-ell) (double s)
+                (- (double m-a) (double m-b)) (double j)
+                (+ (double m-ell) (double m-a) (- (double m-b))))
+        ;; ⟨s_a s_b; m_a, -m_b | s, m_a - m_b⟩
+        cg-ss (jam/clebsch-gordan-exact (double s-a) (double m-a) (double s-b)
+                (- (double m-b)) (double s) (- (double m-a) (double m-b)))
+        pref (* (double A-lsj) phase sqrt-2l1 (double cg-J) (double cg-ls) (double cg-ss))]
+    (mul (complex-cartesian pref 0.0) beta-c)))
+
+(defn satchler-reduced-amplitude-eq13-diagonal-spin
+  "**Not** Austern (4.60). **G. R. Satchler**, *Nucl. Phys.* **55** (1964) **Eq. (13)** in the
+  **diagonal-spin** limit (no spin-flip in χ: only **m_a, m_b** term in the sum). Relates
+  the double integral **\\mathcal{I}** to a **different** reduced quantity with **√(2j+1)**
+  and two Clebsch factors (not **√(2ℓ+1)** as in Austern):
+
+  \\[
+  \\sqrt{2j+1}\\; i^{\\ell}\\, \\tilde\\beta
+  = (-1)^{s_b-m_b}\\,
+  \\langle \\ell\\, m_\\ell;\\, s,\\, M_J-m_\\ell \\,|\\, j\\, M_J \\rangle\\,
+  \\langle s_a\\, m_a;\\, s_b,\\, -m_b \\,|\\, s,\\, m_a-m_b \\rangle\\;
+  \\mathcal{I} \\,,
+  \\quad M_J \\equiv M_B-M_A \\, .
+  \\]
+
+  Use **`austern-reduced-amplitude-beta-sj-ellm`** when you need **β** as in the textbook
+  **Eq. (4.60)**."
+  [ell m-ell s j s-a m-a s-b m-b M-J I]
+  (let [Ic (if (number? I) (complex-cartesian (double I) 0.0) I)
+        cg-ls (jam/clebsch-gordan-exact (double ell) (double m-ell) (double s)
+                (- (double M-J) (double m-ell)) (double j) (double M-J))
+        cg-sab (jam/clebsch-gordan-exact (double s-a) (double m-a) (double s-b)
+                 (- (double m-b)) (double s) (- (double m-a) (double m-b)))
+        phase (Math/pow -1.0 (- (double s-b) (double m-b)))
+        numer-sc (* phase cg-ls cg-sab)
+        numer (mul Ic (complex-cartesian numer-sc 0.0))
+        sqrt-2j1 (Math/sqrt (inc (* 2.0 (double j))))
+        denom (mul (complex-cartesian sqrt-2j1 0.0)
+                   (transfer-imaginary-unit-to-integer-power (long ell)))]
+    (div numer denom)))
+
 (defn transfer-differential-cross-section-angular-with-spin
   "Same as transfer-differential-cross-section-angular, multiplied by
   transfer-one-nucleon-spin-prefactor for target/residual spins J_i, J_f, bound orbital
@@ -1888,6 +2538,15 @@
   [T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f phi l-i l-f J-i J-f l j & opts]
   (* (transfer-differential-cross-section-angular T-amplitudes S-factor k-i k-f theta
                                                  mass-factor-i mass-factor-f phi l-i l-f)
+     (double (apply transfer-one-nucleon-spin-prefactor J-i J-f l j opts))))
+
+(defn transfer-differential-cross-section-angular-coherent-with-spin
+  "Coherent multipole angular distribution (`transfer-differential-cross-section-angular-coherent`)
+  times `transfer-one-nucleon-spin-prefactor` — full single-nucleon spin / 6j folding on top of
+  interfering L amplitudes."
+  [T-amplitudes S-factor k-i k-f theta mass-factor-i mass-factor-f phi l-i l-f J-i J-f l j & opts]
+  (* (transfer-differential-cross-section-angular-coherent T-amplitudes S-factor k-i k-f theta
+                                                         mass-factor-i mass-factor-f phi l-i l-f)
      (double (apply transfer-one-nucleon-spin-prefactor J-i J-f l j opts))))
 
 (defn transfer-total-cross-section
@@ -1911,7 +2570,7 @@
    - theta-min: Minimum angle (default: 0)
    - theta-max: Maximum angle (default: π)
    
-   Returns: σ_total in fm² (can be converted to mb by multiplying by 10)
+   Returns: σ_total in **mb** (1 fm² = 10 mb; integral result × 10)
    
    Example:
    (let [T-map {0 1.0, 1 0.5}
@@ -1947,8 +2606,8 @@
                           (+ (* dsigma-first (Math/sin theta-first))
                              (* dsigma-last (Math/sin theta-last))
                              integral))
-         ;; Total cross-section: 2π · (μ/(2πħ²))² · (k_f/k_i) · integral · S
-         sigma-total (* 2.0 Math/PI mu-factor mu-factor k-ratio final-integral S-factor)]
+         ;; Total cross-section: 2π · (μ/(2πħ²))² · (k_f/k_i) · integral · S → mb
+         sigma-total (* 10.0 2.0 Math/PI mu-factor mu-factor k-ratio final-integral S-factor)]
      sigma-total)))
 
 (defn transfer-kinematic-factors
@@ -1985,7 +2644,7 @@
    where the Jacobian depends on the masses and angles.
    
    Parameters:
-   - dsigma-lab: Differential cross-section in lab frame (fm²/sr)
+   - dsigma-lab: Differential cross-section in lab frame (mb/sr)
    - theta-lab: Scattering angle in lab frame (radians)
    - theta-cm: Scattering angle in CM frame (radians)
    - m-a: Mass of projectile a (amu)
@@ -1993,7 +2652,7 @@
    - m-b: Mass of outgoing particle b (amu)
    - m-B: Mass of residual nucleus B (amu)
    
-   Returns: dσ/dΩ_CM in fm²/sr
+   Returns: dσ/dΩ_CM in mb/sr
    
    Note: This is a simplified version. Full transformation requires
    solving the kinematic equations for the specific reaction.
@@ -2014,7 +2673,7 @@
    Inverse of transfer-lab-to-cm.
    
    Parameters:
-   - dsigma-cm: Differential cross-section in CM frame (fm²/sr)
+   - dsigma-cm: Differential cross-section in CM frame (mb/sr)
    - theta-lab: Scattering angle in lab frame (radians)
    - theta-cm: Scattering angle in CM frame (radians)
    - m-a: Mass of projectile a (amu)
@@ -2022,7 +2681,7 @@
    - m-b: Mass of outgoing particle b (amu)
    - m-B: Mass of residual nucleus B (amu)
    
-   Returns: dσ/dΩ_lab in fm²/sr"
+   Returns: dσ/dΩ_lab in mb/sr"
   [dsigma-cm theta-lab theta-cm _m-a _m-A _m-b _m-B]
   (let [;; Inverse Jacobian: dΩ_CM/dΩ_lab ≈ sin(θ_cm)/sin(θ_lab)
         ;; This is an approximation - full calculation requires solving kinematic equations

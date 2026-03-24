@@ -9,6 +9,21 @@
 (def h 0.01)
 (def mass-factor 0.048)
 
+(deftest F-lsj-r-from-bound-reduced-u-test
+  "**F_{ℓsj}(r)** grid = **R_{φ_f}^* R_{φ_i}** from Numerov **u**; matches manual **u/r** product."
+  (let [phi-i (t/solve-bound-state-numerov -15.0 1 50.0 2.0 0.6 mass-factor h r-max)
+        phi-f (t/solve-bound-state-numerov -2.0 0 50.0 2.0 0.6 mass-factor h r-max)
+        Fv (t/F-lsj-r-from-bound-reduced-u phi-i phi-f h)
+        n (min (count phi-i) (count phi-f))
+        i 50
+        r (* i h)
+        Ri (/ (double (get phi-i i)) r)
+        Rf (/ (double (get phi-f i)) r)
+        manual (* Rf Ri)
+        Fi (get Fv i)]
+    (is (= n (count Fv)))
+    (is (< (Math/abs (- (if (number? Fi) Fi (re Fi)) manual)) 1e-10))))
+
 (deftest transfer-amplitude-post-real-waves-test
   "Test transfer-amplitude-post with real wavefunctions (typical case)"
   (testing "Transfer amplitude with real bound states and real distorted waves"
@@ -66,6 +81,30 @@
         (when (c/complex? T-post)
           (is (not (Double/isNaN (re T-post))) "Real part should not be NaN")
           (is (not (Double/isNaN (im T-post))) "Imaginary part should not be NaN"))))))
+
+(deftest transfer-amplitude-post-austern-5-3-mass-ratio-test
+  "Austern Eq. (5.3): exit χ sampled at (M_A/M_B) r — differs from legacy χ_f(r) when χ_f varies."
+  (testing "non-unity zr-chi-exit-mass-ratio changes ZR POST integral"
+    (let [n 201
+          h 0.1
+          r-max (* (dec n) h)
+          phi-i (vec (repeat n 0.5))
+          phi-f (vec (repeat n 0.5))
+          ;; u_χ_i = r ⇒ R_χ_i = 1 (i>0)
+          chi-i (mapv (fn [^long i] (* (double i) h)) (range n))
+          ;; Reduced u_χ_f = r^2 ⇒ R_χ_f = u/r = r; interpolation at 0.95 r ≠ R(r)
+          chi-f (mapv (fn [^long i]
+                        (let [r (* (double i) h)]
+                          (* r r)))
+                      (range n))
+          D0 1.0
+          T-legacy (t/transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h :zero-range D0 {})
+          T-53 (t/transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h :zero-range D0
+                                           {:zr-chi-exit-mass-ratio 0.95})]
+      (is (c/complex? T-legacy))
+      (is (c/complex? T-53))
+      (is (> (Math/abs (- (re T-legacy) (re T-53))) 1e-6)
+          "scaled exit radius must change overlap when χ_f is not constant"))))
 
 (deftest transfer-amplitude-post-finite-range-test
   "Test transfer-amplitude-post with finite-range interaction"

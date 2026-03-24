@@ -12,7 +12,7 @@
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
                  [org.clojure/data.json "2.4.0"]
-                 [generateme/fastmath "3.0.0-alpha4-SNAPSHOT" :exclusions [com.github.haifengl/smile-mkl]]]
+                 [generateme/fastmath "3.0.0-alpha4" :exclusions [com.github.haifengl/smile-mkl]]]
   :plugins [[lein-cljsbuild "1.1.8"]]
   :main dwba-web.simple-core
   :target-path "target/%s"

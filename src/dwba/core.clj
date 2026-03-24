@@ -1,12 +1,8 @@
 (ns dwba.core
-( :require
-[fastmath.core :as m]
-[fastmath.vector :as v]
-[fastmath.polynomials :as poly]
- [fastmath.special :as spec]
-   [fastmath.vector :as v]
-)
-)
+  (:require [fastmath.core :as m]
+            [fastmath.vector :as v]
+            [fastmath.polynomials :as poly]
+            [fastmath.special :as spec]))
 (use 'complex)
 (use 'functions)
 (use 'dwba.finite-well)

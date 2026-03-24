@@ -162,8 +162,8 @@ class DWBADashboard {
         const th = (thetaCmDeg * Math.PI) / 180;
         const s = Math.sin(th / 2);
         if (s < 1e-5) return null;
-        const fm2 = Math.pow((Z1 * Z2 * e2) / (4 * E_cm_MeV), 2) / Math.pow(s, 4);
-        return fm2 * 10.0; // 1 fm² = 10 mb
+        // dσ/dΩ (mb/sr): Coulomb prefactor / sin⁴(θ/2), conventional ×10 from fm²-area units
+        return Math.pow((Z1 * Z2 * e2) / (4 * E_cm_MeV), 2) / Math.pow(s, 4) * 10.0;
     }
 
     labToCmKineticMeV(mProjMeV, mTargMeV, eLabMeV) {

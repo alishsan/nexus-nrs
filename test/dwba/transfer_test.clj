@@ -2,6 +2,7 @@
   "Tests for transfer reaction calculations including bound states and shooting method."
   (:require [clojure.test :refer :all]
             [dwba.transfer :as t]
+            [dwba.angular-momentum :as jam]
             [functions :refer :all]
             [fastmath.core :as m]
             [complex :as c :refer [re im mag complex-cartesian]]))
@@ -341,7 +342,28 @@
       (is (number? dsigma-pi2) "Should return a number at theta=π/2")
       ;; Check that not all values are identical
       (let [unique-values (distinct [dsigma-pi6 dsigma-pi4 dsigma-pi3 dsigma-pi2])]
-        (is (>= (count unique-values) 1) "Should have variation (at least one unique value)")))))
+        (is (>= (count unique-values) 1) "Should have variation (at least one unique value)"))))
+  (testing "Coherent vs incoherent: l_i=1,l_f=0 allows only L=1 — single L ⇒ equal"
+    (let [T {1 1.0 3 0.5}
+          th (/ Math/PI 4)
+          incoh (t/transfer-angular-distribution T th 0.0 1 0)
+          coh (t/transfer-angular-distribution-coherent T th 0.0 1 0)]
+      (is (number? incoh))
+      (is (number? coh))
+      (is (pos? incoh))
+      (is (pos? coh))
+      ;; Only L=1 has nonzero weight; L=3 dropped → coherent = incoherent
+      (is (< (Math/abs (- incoh coh)) 1e-12))))
+  (testing "Coherent differs from incoherent when two L allowed (l_i=1,l_f=1)"
+    (let [T {0 1.0 1 1.0 2 0.5}
+          th 0.55
+          incoh (t/transfer-angular-distribution T th 0.0 1 1)
+          coh (t/transfer-angular-distribution-coherent T th 0.0 1 1)]
+      (is (number? incoh))
+      (is (number? coh))
+      (is (pos? incoh))
+      (is (pos? coh))
+      (is (not= incoh coh) "Several allowed L ⇒ interference changes |Σ T_L Y_L0|² vs Σ|T_L Y_L0|²"))))
 
 (deftest transfer-nuclear-spin-api-test
   (testing "statistical factor and deuteron spin average"
@@ -687,3 +709,154 @@
       (is (c/complex? f) "Should return a complex number")
       (is (not (Double/isNaN (re f))) "Real part should not be NaN")
       (is (not (Double/isNaN (im f))) "Imaginary part should not be NaN"))))
+
+(deftest transfer-rutherford-dsigma-mb-sr-test
+  (let [r30 (t/transfer-rutherford-dsigma-mb-sr 1 20 13.0476 (/ Math/PI 6))
+        r90 (t/transfer-rutherford-dsigma-mb-sr 1 20 13.0476 (/ Math/PI 2))]
+    (is (pos? r30))
+    (is (> r30 r90) "elastic Rutherford: smaller θ_cm → larger dσ/dΩ")))
+
+(deftest austern-reduced-amplitude-beta-sj-ellm-test
+  "Austern (1970) Eq. (4.60): √(2ℓ+1) i^ℓ β = I ⇒ β = I / (√(2ℓ+1) i^ℓ); no CG factors in β."
+  (testing "ℓ=0 ⇒ β = I"
+    (let [I (complex-cartesian 2.0 -1.0)
+          b (t/austern-reduced-amplitude-beta-sj-ellm 0 0 0.5 0.5 I)]
+      (is (< (Math/abs (- (re b) 2.0)) 1e-10))
+      (is (< (Math/abs (- (im b) -1.0)) 1e-10))))
+  (testing "ℓ=1 ⇒ β = I / (i√3)"
+    (let [I (complex-cartesian 1.0 0.0)
+          b (t/austern-reduced-amplitude-beta-sj-ellm 1 0 0.5 1.5 I)
+          ;; 1/(i√3) = -i/√3
+          im-exp (/ -1.0 (Math/sqrt 3.0))]
+      (is (< (Math/abs (re b)) 1e-10))
+      (is (< (Math/abs (- (im b) im-exp)) 1e-10))))
+  (testing "scales linearly with I"
+    (let [b1 (t/austern-reduced-amplitude-beta-sj-ellm 0 0 0.5 0.5 (complex-cartesian 1.0 2.0))
+          b2 (t/austern-reduced-amplitude-beta-sj-ellm 0 0 0.5 0.5 (complex-cartesian 3.0 6.0))]
+      (is (< (Math/abs (- (/ (re b2) (re b1)) 3.0)) 1e-9))
+      (is (< (Math/abs (- (/ (im b2) (im b1)) 3.0)) 1e-9)))))
+
+(deftest satchler-reduced-amplitude-eq13-diagonal-spin-test
+  "Satchler NPA 55 (1964) Eq. (13), diagonal-spin: CGs folded into reduced amplitude with √(2j+1)."
+  (let [I (complex-cartesian 2.0 0.0)
+        ;; ℓ=0, j=½,s=½, M_J=½; (d,p)-like s_a=1,m_a=1, s_b=½,m_b=½
+        b (t/satchler-reduced-amplitude-eq13-diagonal-spin 0 0 0.5 0.5 1.0 1.0 0.5 0.5 0.5 I)
+        cg1 (jam/clebsch-gordan-exact 0 0 0.5 0.5 0.5 0.5)
+        cg2 (jam/clebsch-gordan-exact 1.0 1.0 0.5 -0.5 0.5 0.5)
+        expect (/ (* cg1 cg2 2.0) (Math/sqrt 2.0))]
+    (is (< (Math/abs (- (re b) expect)) 1e-10))
+    (is (< (Math/abs (im b)) 1e-9)))
+  (testing "forbidden triangle → ~0 (CG product vanishes)"
+    (let [b (t/satchler-reduced-amplitude-eq13-diagonal-spin 3 0 0.5 0.0 1.0 1.0 0.5 0.5 0.5
+                  (complex-cartesian 1.0 0.0))]
+      (is (< (Math/abs (re b)) 1e-9))
+      (is (< (Math/abs (im b)) 1e-9)))))
+
+(deftest austern-radial-integral-eq-5-5-test
+  "Austern (5.5): prefactor × Simpson; ZR F·R_α·R_β·r² builder."
+  (testing "prefactor (M_B/M_A)(4π/(k_α k_β))"
+    (let [p (t/austern-radial-integral-prefactor-eq-5-5 40.0 41.0 1.0 2.0)]
+      (is (< (Math/abs (- p (* (/ 41.0 40.0) 2.0 Math/PI))) 1e-12))))
+  (testing "I with unit book integrand on [0,1] ⇒ prefactor only"
+    (let [I (t/austern-radial-integral-I-Lb-La-eq-5-5
+              (vec (repeat 11 1.0)) 0.1 40.0 41.0 1.0 1.0)
+          expect (* (/ 41.0 40.0) 4.0 Math/PI)]
+      (is (< (Math/abs (- I expect)) 1e-9))))
+  (testing "austern-radial-integrand-zr-F-Ra-Rb-r2: u=r² ⇒ R=r, ρ=1 ⇒ r⁴"
+    (let [h 0.1
+          n 6
+          ua (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+          iv (t/austern-radial-integrand-zr-F-Ra-Rb-r2 (vec (repeat n 1.0)) ua ua h 1.0)
+          r 0.2
+          expect (* r r r r)]
+      (is (< (Math/abs (- (double (nth iv 2)) expect)) 1e-10))))
+  (testing "full ZR I from u: finite"
+    (let [h 0.05
+          n 30
+          ua (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+          Fv (vec (repeat n 1.0))
+          Izr (t/austern-radial-integral-I-zr-eq-5-5-from-u
+                Fv ua ua h 40.0 41.0 0.8 0.9 (t/austern-zr-chi-exit-mass-ratio 40.0 41.0))]
+      (is (Double/isFinite Izr))
+      (is (pos? Izr)))))
+
+(deftest austern-reduced-amplitude-beta-sum-eq-5-6-test
+  "Austern (5.6): single L_α=L_β=ℓ=m=0 row with σ=0, I=1 ⇒ β = Y_00(Θ,0) = 1/√(4π)."
+  (let [b (t/austern-reduced-amplitude-beta-sum-eq-5-6
+            0 0 0.7
+            [{:L-alpha 0 :L-beta 0 :I 1.0 :sigma-alpha 0.0 :sigma-beta 0.0}])
+        y00 (/ 1.0 (Math/sqrt (* 4.0 Math/PI)))]
+    (is (< (Math/abs (- (re b) y00)) 1e-9))
+    (is (< (Math/abs (im b)) 1e-9))))
+
+(deftest austern-radial-I-zr-to-beta-sum-eq-5-6-e2e-test
+  "End-to-end: I from (5.5) ZR `austern-radial-integral-I-zr-eq-5-5-from-u` into (5.6).
+  For ℓ=m=0, one L_α=L_β=0 row, σ=0: β = I·Y_00 = I/√(4π) (Y_00 independent of Θ)."
+  (let [h 0.05
+        n 30
+        ua (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+        Fv (vec (repeat n 1.0))
+        M-A 40.0 M-B 41.0 k-a 0.8 k-b 0.9
+        rho (t/austern-zr-chi-exit-mass-ratio M-A M-B)
+        Izr (t/austern-radial-integral-I-zr-eq-5-5-from-u
+              Fv ua ua h M-A M-B k-a k-b rho)
+        theta 0.73
+        b (t/austern-reduced-amplitude-beta-sum-eq-5-6
+            0 0 theta
+            [{:L-alpha 0 :L-beta 0 :I Izr :sigma-alpha 0.0 :sigma-beta 0.0}])
+        expect-re (* Izr (/ 1.0 (Math/sqrt (* 4.0 Math/PI))))]
+    (is (Double/isFinite Izr))
+    (is (< (Math/abs (- (re b) expect-re)) 1e-8))
+    (is (< (Math/abs (im b)) 1e-8))))
+
+(deftest austern-dw-transition-amplitude-T-term-4-59-test
+  "Eq. (4.59): one (ℓ,s,j) term equals √(2ℓ+1) A (-)^{s_b-m_b} CG_J CG_{ℓs} CG_{ss} β."
+  (let [beta (complex-cartesian 5.0 -3.0)
+        ;; ℓ=s=j=0, J_A=J_B=j=0 ⇒ ⟨0 0; 0 0 | 0 0⟩ = +1 (not 1⊗0 where CG = -1)
+        T (t/austern-dw-transition-amplitude-T-term-4-59
+            1.0 0 0 0.0 0.0 0 0 0 0 0 0 0 0 beta)]
+    (is (< (Math/abs (- (re T) (re beta))) 1e-9))
+    (is (< (Math/abs (- (im T) (im beta))) 1e-9))))
+
+(deftest transfer-angular-m-sum-s-state-isotropic-test
+  "l_i=0, l_f=L, single T_L: unpolarized m-sum ⇒ Σ_m |Y_{Lm}|² / (2l_i+1) is θ-independent."
+  (let [T {3 (complex-cartesian 1.0 0.2)}
+        a (t/transfer-angular-distribution-m-sum-unpolarized T (/ Math/PI 6) 0.0 0 3)
+        b (t/transfer-angular-distribution-m-sum-unpolarized T (/ Math/PI 2) 0.0 0 3)]
+    (is (Double/isFinite (double a)))
+    (is (pos? a))
+    (is (< (Math/abs (- (double a) (double b))) 1e-9)
+        "same value at 30° and 90° CM")))
+
+(deftest transfer-m-sum-recoupled-vs-legacy-mi-mf-test
+  "Recoupled S(L,L') × χ(L,L') agrees with explicit Σ_{m_i,m_f} |A|² / (2l_i+1)."
+  (let [legacy @#'t/transfer-angular-distribution-m-sum-unpolarized-legacy-mi-mf
+        cases [[{1 1.0} 0.4 0.0 1 1]
+               [{2 (complex-cartesian 0.8 -0.3)} 0.7 0.3 1 2]
+               [{1 1.0 2 0.5 3 -0.2} 1.1 -0.2 2 2]
+               [{1 0.3 3 1.0} 0.9 0.4 2 3]]]
+    (doseq [[T th ph li lf] cases]
+      (let [r (t/transfer-angular-distribution-m-sum-unpolarized T th ph li lf)
+            l (legacy T th ph li lf)]
+        (is (< (Math/abs (- (double r) (double l))) 1e-7)
+            (str "li=" li " lf=" lf " θ=" th))))))
+
+(deftest transfer-orbital-cg-bilinear-sum-mi-m-independence-test
+  "Σ_{m_i} CG·CG is independent of projection M (integer orbitals)."
+  (let [cg @#'t/transfer-cg-orbitals-exact
+        sum-M (fn [[li L Lp lf M]]
+                (reduce
+                 (fn [^double acc ^long m-i]
+                   (let [m-f (+ m-i M)]
+                     (if (> (Math/abs m-f) lf)
+                       acc
+                       (+ acc (* (double (cg li m-i L M lf m-f))
+                                 (double (cg li m-i Lp M lf m-f)))))))
+                 0.0
+                 (range (- li) (inc li))))
+        li 2 L 2 Lp 2 lf 2
+        s0 (sum-M [li L Lp lf 0])
+        s2 (sum-M [li L Lp lf 2])
+        pub (t/transfer-orbital-cg-bilinear-sum-mi li L Lp lf)]
+    (is (< (Math/abs (- pub s0)) 1e-9) "public helper matches M=0 sum")
+    (is (< (Math/abs (- s0 s2)) 1e-9) "M=0 vs M=2")))

@@ -209,9 +209,8 @@
 ;; Calculate differential cross-section
 (def dsigma-dOmega (inel/inelastic-differential-cross-section T-inel k-i k-f E-CM E-ex mass-f))
 
-(println "Differential cross-section:")
-(println (format "  dσ/dΩ = %.4e fm²/sr" dsigma-dOmega))
-(println (format "  dσ/dΩ = %.4e mb/sr (1 mb = 10 fm²)" (* dsigma-dOmega 10.0)))
+(println "Differential cross-section (mb/sr):")
+(println (format "  dσ/dΩ = %.4e mb/sr" dsigma-dOmega))
 (println "")
 
 ;; ============================================================================
@@ -223,9 +222,8 @@
 (def dsigma-complete (inel/inelastic-cross-section chi-i chi-f lambda mu beta-0 V-params 
                                                    E-CM E-ex r-max h mass-f))
 
-(println "Complete calculation:")
-(println (format "  dσ/dΩ = %.4e fm²/sr" dsigma-complete))
-(println (format "  dσ/dΩ = %.4e mb/sr" (* dsigma-complete 10.0)))
+(println "Complete calculation (mb/sr):")
+(println (format "  dσ/dΩ = %.4e mb/sr" dsigma-complete))
 (println "")
 
 ;; ============================================================================
@@ -238,7 +236,7 @@
 (doseq [beta-test [0.05 0.10 0.15 0.20]]
   (let [T-test (inel/inelastic-amplitude chi-i chi-f lambda mu beta-test V-params r-max h)
         dsigma-test (inel/inelastic-differential-cross-section T-test k-i k-f E-CM E-ex mass-f)]
-    (println (format "  β₀ = %.2f: dσ/dΩ = %.4e mb/sr" beta-test (* dsigma-test 10.0)))))
+    (println (format "  β₀ = %.2f: dσ/dΩ = %.4e mb/sr" beta-test dsigma-test))))
 (println "")
 
 ;; ============================================================================

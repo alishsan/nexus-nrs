@@ -92,9 +92,8 @@
 
 ;; Calculate differential cross-section
 (def dsigma-dOmega (inel/inelastic-differential-cross-section T-inel k-i k-f E-incident E-ex mass-factor))
-(println "Differential cross-section:")
-(println "  dσ/dΩ =" (format "%.4e" dsigma-dOmega) "fm²/sr")
-(println "  dσ/dΩ =" (format "%.4e" (* dsigma-dOmega 10.0)) "mb/sr (1 mb = 10 fm²)")
+(println "Differential cross-section (mb/sr):")
+(println "  dσ/dΩ =" (format "%.4e" dsigma-dOmega) "mb/sr")
 (println "")
 
 ;; ============================================================================
@@ -106,9 +105,8 @@
 ;; Use convenience function
 (def dsigma-complete (inel/inelastic-cross-section chi-i chi-f lambda 0 beta-2 V-params 
                                                    E-incident E-ex r-max h mass-factor))
-(println "Complete calculation:")
-(println "  dσ/dΩ =" (format "%.4e" dsigma-complete) "fm²/sr")
-(println "  dσ/dΩ =" (format "%.4e" (* dsigma-complete 10.0)) "mb/sr")
+(println "Complete calculation (mb/sr):")
+(println "  dσ/dΩ =" (format "%.4e" dsigma-complete) "mb/sr")
 (println "")
 
 ;; ============================================================================
@@ -134,9 +132,9 @@
 (def dsigma-2 (inel/inelastic-differential-cross-section T-inel-2 k-i k-f E-incident E-ex mass-factor))
 (def dsigma-3 (inel/inelastic-differential-cross-section T-inel-3 k-i k-f E-incident E-ex mass-factor))
 
-(println "Differential cross-sections:")
-(println "  dσ/dΩ (λ=2):" (format "%.4e" dsigma-2) "fm²/sr")
-(println "  dσ/dΩ (λ=3):" (format "%.4e" dsigma-3) "fm²/sr")
+(println "Differential cross-sections (mb/sr):")
+(println "  dσ/dΩ (λ=2):" (format "%.4e" dsigma-2) "mb/sr")
+(println "  dσ/dΩ (λ=3):" (format "%.4e" dsigma-3) "mb/sr")
 (println "  Ratio (λ=2/λ=3):" (format "%.2f" (/ dsigma-2 dsigma-3)))
 (println "")
 

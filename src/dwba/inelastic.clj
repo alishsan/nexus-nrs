@@ -662,7 +662,7 @@
 
 (defn- normalize-wave-max
   "Normalize wavefunction vector to max |u| = 1 so amplitudes/cross sections stay in a reasonable scale.
-   solve-numerov returns u(r) with arbitrary scale; without this, inelastic dσ can be 10^40+ fm²/sr."
+   solve-numerov returns u(r) with arbitrary scale; without this, inelastic dσ can blow up in raw units."
   [u]
   (let [max-mag (reduce (fn [acc val]
                           (let [m (if (number? val) (Math/abs val) (mag val))]
@@ -744,7 +744,7 @@
       (transfer/distorted-wave-optical E-i L-i s j-val U-fn r-max h mf))
     
     ;; Fall back to simple real potential (backward compatible)
-    ;; Normalize to max|u|=1 so dσ is in a reasonable scale (otherwise 10^40+ fm²/sr)
+    ;; Normalize to max|u|=1 so dσ is in a reasonable scale (otherwise huge raw |u| scale)
     :else
     (let [[V0 R0 a0] V-params]
       (normalize-wave-max (solve-numerov E-i L-i V0 R0 a0 h r-max)))))
@@ -1007,7 +1007,7 @@
    - E-ex: Excitation energy (MeV)
    - mass-factor: Mass factor (2μ/ħ²) in MeV⁻¹·fm⁻²
    
-   Returns: dσ/dΩ in fm²/sr (can be converted to mb/sr by multiplying by 10)
+   Returns: dσ/dΩ in **mb/sr** (kinematic |T|² factor × 10; 1 fm² = 10 mb)
    
    Example:
    (let [T-inel (inelastic-amplitude ...)
@@ -1024,7 +1024,7 @@
                    (* T-inel T-inel)
                    (let [T-mag-val (mag T-inel)]
                      (* T-mag-val T-mag-val)))]
-    (* mu-factor mu-factor k-ratio T-squared)))
+    (* 10.0 mu-factor mu-factor k-ratio T-squared)))
 
 (defn inelastic-cross-section
   "Calculate inelastic differential cross-section (simplified version).
@@ -1044,7 +1044,7 @@
    - h: Step size (fm)
    - mass-factor: Mass factor (2μ/ħ²)
    
-   Returns: dσ/dΩ in fm²/sr
+   Returns: dσ/dΩ in **mb/sr** (via `inelastic-differential-cross-section`).
    
    Example:
    (let [chi-i (distorted-wave-entrance 10.0 0 [50.0 2.0 0.6] 0.01 20.0)
@@ -1389,7 +1389,7 @@
    - lambda: Multipole order (optional, for angular dependence)
    - mu: Magnetic quantum number (optional, for angular dependence)
    
-   Returns: dσ/dΩ(θ) in fm²/sr
+   Returns: dσ/dΩ(θ) in **mb/sr**
    
    Example:
    (inelastic-angular-distribution T-inel (/ Math/PI 2) k-i k-f 10.0 4.44 mass-factor)"

@@ -82,7 +82,7 @@
   (let [theta (* theta-deg (/ Math/PI 180))
         dsigma (inel/inelastic-angular-distribution T-inel theta k-i k-f 
                                                    E-incident E-ex mass-factor)]
-    (println (format "  θ=%3d°: dσ/dΩ = %.4e fm²/sr" theta-deg dsigma))))
+    (println (format "  θ=%3d°: dσ/dΩ = %.4e mb/sr" theta-deg dsigma))))
 (println "")
 
 ;; ============================================================================
@@ -99,7 +99,7 @@
 (println "Angular distribution (first 5 points):")
 (doseq [[theta dsigma] (take 5 angular-dist)]
   (let [theta-deg (* theta (/ 180 Math/PI))]
-    (println (format "  θ=%.1f°: dσ/dΩ = %.4e fm²/sr" theta-deg dsigma))))
+    (println (format "  θ=%.1f°: dσ/dΩ = %.4e mb/sr" theta-deg dsigma))))
 (println "")
 
 ;; ============================================================================
@@ -123,7 +123,7 @@
         f-recon (inel/legendre-expansion legendre-coeffs theta)
         dsigma-recon (inel/inelastic-angular-distribution f-recon theta k-i k-f 
                                                          E-incident E-ex mass-factor)]
-    (println (format "  θ=%3d°: dσ/dΩ = %.4e fm²/sr" theta-deg dsigma-recon))))
+    (println (format "  θ=%3d°: dσ/dΩ = %.4e mb/sr" theta-deg dsigma-recon))))
 (println "")
 
 ;; ============================================================================
@@ -159,14 +159,14 @@
 (def dsigma-multi (inel/multi-channel-angular-distribution amplitudes theta-test2 
                                                            k-i k-f E-incident E-ex mass-factor))
 (println "Multi-channel angular distribution (with interference):")
-(println (format "  dσ/dΩ(π/2) = %.4e fm²/sr" dsigma-multi))
+(println (format "  dσ/dΩ(π/2) = %.4e mb/sr" dsigma-multi))
 (println "")
 
 ;; Compare with single channel
 (def dsigma-single (inel/inelastic-angular-distribution T-inel-1 theta-test2 
                                                        k-i k-f E-incident E-ex mass-factor))
 (println "Single-channel angular distribution:")
-(println (format "  dσ/dΩ(π/2) = %.4e fm²/sr" dsigma-single))
+(println (format "  dσ/dΩ(π/2) = %.4e mb/sr" dsigma-single))
 (println (format "  Ratio (multi/single): %.2f" (/ dsigma-multi dsigma-single)))
 (println "")
 

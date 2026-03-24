@@ -116,16 +116,16 @@
 ;; Calculate differential cross section at various angles
 (println "Elastic differential cross section dσ/dΩ(θ):")
 (println "")
-(println "Angle (deg) | Angle (rad) | dσ/dΩ (fm²/sr) | dσ/dΩ (mb/sr)")
-(println "------------|-------------|-----------------|---------------")
+(println "Angle (deg) | Angle (rad) | dσ/dΩ (mb/sr)")
+(println "------------|-------------|---------------")
 
 (doseq [theta-deg [0 15 30 45 60 75 90 105 120 135 150 165 180]]
   (try
     (let [theta (* theta-deg (/ Math/PI 180.0))
           dsigma-complex (differential-cross-section E-CM V-params theta L-max)
-          dsigma (mag dsigma-complex)]  ; Take magnitude for cross section
-      (println (format "  %3d      |  %6.4f     |  %.4e      |  %.4e"
-                      theta-deg theta dsigma (* dsigma 10.0))))
+          dsigma (mag dsigma-complex)]  ; |f|² in mb/sr
+      (println (format "  %3d      |  %6.4f     |  %.4e"
+                      theta-deg theta dsigma)))
     (catch Exception e
       (println (format "  %3d      |  %6.4f     |  Error: %s" 
                       theta-deg (* theta-deg (/ Math/PI 180.0)) (.getMessage e))))))
@@ -146,10 +146,10 @@
 (def dsigma-90 (mag (differential-cross-section E-CM V-params theta-90 L-max)))
 (def dsigma-180 (mag (differential-cross-section E-CM V-params theta-180 L-max)))
 
-(println "Key angles:")
-(println (format "  Forward (0°):   dσ/dΩ = %.4e mb/sr" (* dsigma-0 10.0)))
-(println (format "  Perpendicular (90°): dσ/dΩ = %.4e mb/sr" (* dsigma-90 10.0)))
-(println (format "  Backward (180°): dσ/dΩ = %.4e mb/sr" (* dsigma-180 10.0)))
+(println "Key angles (mb/sr):")
+(println (format "  Forward (0°):   dσ/dΩ = %.4e mb/sr" dsigma-0))
+(println (format "  Perpendicular (90°): dσ/dΩ = %.4e mb/sr" dsigma-90))
+(println (format "  Backward (180°): dσ/dΩ = %.4e mb/sr" dsigma-180))
 (println "")
 (println (format "  Forward/Backward ratio: %.2e" (/ dsigma-0 dsigma-180)))
 (println (format "  Forward/90° ratio: %.2e" (/ dsigma-0 dsigma-90)))
@@ -163,8 +163,7 @@
 
 (def sigma-total (total-cross-section E-CM V-params L-max))
 
-(println (format "Total cross section: σ_total = %.4e fm²" sigma-total))
-(println (format "Total cross section: σ_total = %.4e mb (1 mb = 10 fm²)" (* sigma-total 10.0)))
+(println (format "Total cross section: σ_total = %.4e mb" sigma-total))
 (println "")
 
 ;; ============================================================================
@@ -174,7 +173,7 @@
 (println "=== Partial Wave Contributions ===")
 
 (println "Cross section contribution from each partial wave:")
-(println "L  | |S-1|²  | Contribution (fm²)")
+(println "L  | |S-1|²  | Contribution (mb)")
 (println "---|--------|-------------------")
 
 (let [k (m/sqrt (* mass-factor E-CM))]
@@ -182,8 +181,8 @@
     (let [S-val (s-matrix E-CM V-params L)
           S-minus-1 (subt S-val 1.0)
           S-minus-1-mag (mag S-minus-1)
-          ;; Cross section contribution: σ_L = (π/k²) (2L+1) |S_L - 1|²
-          sigma-L (* (/ Math/PI (* k k)) (inc (* 2 L)) (* S-minus-1-mag S-minus-1-mag))]
+          ;; Cross section contribution (mb): kinematic σ_L × 10 (1 fm² = 10 mb)
+          sigma-L (* 10.0 (/ Math/PI (* k k)) (inc (* 2 L)) (* S-minus-1-mag S-minus-1-mag))]
       (println (format "%2d | %.4f | %.4e" L S-minus-1-mag sigma-L)))))
 (println "")
 

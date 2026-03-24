@@ -67,8 +67,8 @@
       (is (not (Double/isInfinite dsigma)) "Differential cross-section should not be infinite")
       ;; Typical values: dσ/dΩ for inelastic scattering can vary widely
       ;; The exact value depends on many factors (energy, potential, etc.)
-      (is (> dsigma 1e-10) "Differential cross-section should be non-negligible (> 10^-10 fm²/sr)")
-      (is (< dsigma 1e3) "Differential cross-section should be reasonable (< 1000 fm²/sr)"))))
+      (is (> dsigma 1e-9) "Differential cross-section should be non-negligible (mb/sr scale)")
+      (is (< dsigma 1e4) "Differential cross-section should be reasonable (< 10^4 mb/sr)"))))
 
 ;; ============================================================================
 ;; Test Case 2: Angular Distribution for ¹²C(α,α')¹²C* (2⁺)
