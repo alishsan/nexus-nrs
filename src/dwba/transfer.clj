@@ -2292,6 +2292,38 @@
   ^double [^double M-A ^double M-B ^double k-alpha ^double k-beta]
   (* (/ M-B M-A) (* 4.0 Math/PI) (/ 1.0 (* k-alpha k-beta))))
 
+(defn f-alphaL
+  "Austern **Eq. (5.5)** entrance factor **f_{α L_α}(k_α, r)** on **r = i·h**.
+
+  **u_α** is the **reduced** distorted wave (**u = rR**) from **`distorted-wave-optical`** for partial wave
+  **L_α**. Returns a vector **f(r_i)** with **(count u_α)** entries:
+
+  **f_{α L_α}(k_α, r_i) := R_α(r_i) = u_α(r_i)/r_i** via the same **u → R** rule as **`transfer-amplitude-post`**.
+
+  **k_α** is implicit in which solution you solved. If the book’s **f** differs from **R** (e.g. **u/(ikr)** or Coulomb
+  normalization), multiply this vector or replace with your convention before **`austern-radial-integral-I-Lb-La-eq-5-5`**."
+  [u-alpha ^double h]
+  (radial-R-from-reduced-u u-alpha h))
+
+(defn f-betaL
+  "Austern **Eq. (5.5)** exit factor **f_{β L_β}(k_β, (M_A/M_B)\\, r)** on the **entrance** grid **r_i = i·h**.
+
+  **u_β** is the reduced exit distorted wave for partial wave **L_β**. For each **i = 0 … n−1**, samples
+  **R_β** at argument **ρ \\, r_i** with **ρ = zr-mass-ratio** (**M_A/M_B**, same as **`austern-zr-chi-exit-mass-ratio`** /
+  **`:zr-chi-exit-mass-ratio`**: exit χ evaluated at scaled radius in ZR). **ρ = 1** gives **f_{β L_β}(k_β, r_i)**.
+
+  Returns a vector of length **n-points** (use **n = min(count F, count u_α, count u_β)** for ZR integrands).
+  Linear interpolation: **`transfer-radial-R-at-r-linear`** on **R_β = u_β/r**.
+
+  **Convention:** same **f ≡ R** note as **`f-alphaL`**."
+  [u-beta ^double h zr-mass-ratio n-points]
+  (let [R-beta (radial-R-from-reduced-u u-beta h)
+        rho (double zr-mass-ratio)
+        n (long n-points)]
+    (mapv (fn [^long i]
+            (transfer-radial-R-at-r-linear R-beta h (* rho (* (double i) h))))
+          (range n))))
+
 (defn austern-radial-integral-I-Lb-La-eq-5-5
   "Radial integral **I_{L_β L_α}^{ℓsj}** from **N. Austern**, *Direct Nuclear Reaction Theories*,
   **Eq. (5.5)**:
@@ -2309,7 +2341,7 @@
   (the **integrand** of the book's **dr** integral — **not** necessarily including **r²**; see below).
 
   **Convention bridge:** partial-wave codes often reduce **∫ d³r** to **4π ∫ R_β R_α r² dr** for fixed
-  **(L_α,L_β)**. If your **f_α, f_β** are those **R** factors, use **`austern-radial-integrand-zr-F-Ra-Rb-r2`**
+  **(L_α,L_β)**. Build **f_α**, **f_β** with **`f-alphaL`** and **`f-betaL`**, or use **`austern-radial-integrand-zr-F-Ra-Rb-r2`**
   and then this function. If your optical code defines **f** differently (e.g. **u/(kr)**), fold that
   into **integrand-real-vec** before calling here.
 
@@ -2324,33 +2356,46 @@
      (austern-radial-simpson-integrate-real (double h) integrand-real-vec)))
 
 (defn austern-radial-integrand-zr-F-Ra-Rb-r2
-  "Per-point samples **F(r) R_α(r) R_β((M_A/M_B) r) r²** on **r = i·h**, real-valued.
-  **u_α**, **u_β** are reduced radial waves (**u=rR**) as in `distorted-wave-optical` /
-  `transfer-amplitude-post`. **R_β** is linearly interpolated at the scaled radius.
-  **zr-mass-ratio** = **M_A/M_B** (same as **`:zr-chi-exit-mass-ratio`** / `austern-zr-chi-exit-mass-ratio`)."
+  "Per-point samples **F(r) f_{αL}(r) f_{βL}((M_A/M_B)r) r²** on **r = i·h**, with **f** from **`f-alphaL`**
+  / **`f-betaL`** (**R** convention). **u_α**, **u_β** reduced (**u=rR**). **zr-mass-ratio** = **M_A/M_B**."
   [F-vec u-alpha u-beta h zr-mass-ratio]
   (let [h* (double h)
-        rho (double zr-mass-ratio)
-        Ra (radial-R-from-reduced-u u-alpha h*)
-        Rb (radial-R-from-reduced-u u-beta h*)
-        n (min (count F-vec) (count Ra) (count Rb))]
+        n (min (count F-vec) (count u-alpha) (count u-beta))
+        fa (f-alphaL u-alpha h*)
+        fb (f-betaL u-beta h* zr-mass-ratio n)]
     (mapv (fn [^long i]
             (let [r (* (double i) h*)
-                  fa (austern-real-scalar (get Ra i))
-                  fb-raw (transfer-radial-R-at-r-linear Rb h* (* rho r))
-                  fb (austern-real-scalar fb-raw)
+                  fa-i (austern-real-scalar (get fa i))
+                  fb-i (austern-real-scalar (get fb i))
                   Fi (austern-real-scalar (get F-vec i))
                   rsq (* r r)]
-              (* Fi fa fb rsq)))
+              (* Fi fa-i fb-i rsq)))
           (range n))))
 
 (defn austern-radial-integral-I-zr-eq-5-5-from-u
-  "Convenience: **(5.5)** with ZR integrand **F R_α R_β r²** built from reduced **u** grids
-  (**one** entrance partial wave **L_α**, **one** exit **L_β**). Pass **F_{ℓsj}(r)** on the same grid."
+  "Convenience: **(5.5)** with ZR integrand **F f_{αL} f_{βL} r²** (`**f-alphaL**`, **`f-betaL`**) when
+  **F_{ℓsj}** is already on a vector (**one** **L_α**, **one** **L_β** partial wave per **u_α**, **u_β**).
+  To build **F** from bound states automatically, use **`austern-radial-integral-I-eq-5-5-from-F-lsj`**."
   [F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
   (let [integrand (austern-radial-integrand-zr-F-Ra-Rb-r2
                     F-vec u-alpha u-beta (double h) (double zr-mass-ratio))]
     (austern-radial-integral-I-Lb-La-eq-5-5 integrand h M-A M-B k-alpha k-beta)))
+
+(defn austern-radial-integral-I-eq-5-5-from-F-lsj
+  "Full **N. Austern**, **Eq. (5.5)** radial integral **I_{L_β L_α}^{ℓsj}** from bound + distorted **u** grids.
+
+  1. **F_{ℓsj}(r_i) = R_{φ_f}^* R_{φ_i}** — **`F-lsj-r-from-bound-reduced-u`** on **φ_i**, **φ_f** (reduced bound **u**, **E < 0**).
+  2. **f_{α L_α}(k_α, r)**, **f_{β L_β}(k_β, (M_A/M_B)r)** — **`f-alphaL`**, **`f-betaL`** inside **`austern-radial-integrand-zr-F-Ra-Rb-r2`**.
+  3. **(M_B/M_A)(4π/(k_α k_β)) ∫ dr F f_α f_β** (Simpson) — **`austern-radial-integral-I-Lb-La-eq-5-5`**.
+  
+  Uses **n = min(count φ_i, count φ_f, count u_α, count u_β)** samples via the shared integrand; align grids.
+  **k_α**, **k_β** (**fm⁻¹**). **zr-mass-ratio** = **M_A/M_B** (`**austern-zr-chi-exit-mass-ratio**`).
+  
+  Equivalent to **`(austern-radial-integral-I-zr-eq-5-5-from-u (F-lsj-r-from-bound-reduced-u φ_i φ_f h) u_α u_β …)`**."
+  [phi-i-reduced-u phi-f-reduced-u u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
+  (let [F-vec (F-lsj-r-from-bound-reduced-u phi-i-reduced-u phi-f-reduced-u h)]
+    (austern-radial-integral-I-zr-eq-5-5-from-u
+      F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio)))
 
 (defn austern-reduced-amplitude-beta-sj-ellm
   "Reduced amplitude **β_{sj}^{ℓm}** exactly as **N. Austern**, *Direct Nuclear Reaction

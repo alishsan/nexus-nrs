@@ -752,6 +752,41 @@
       (is (< (Math/abs (re b)) 1e-9))
       (is (< (Math/abs (im b)) 1e-9)))))
 
+(deftest f-alphaL-f-betaL-test
+  "**f-alphaL** = **R_α**; **f-betaL** with **ρ=1** matches **R_β** on grid; **ρ** scales radius."
+  (let [as-double #(double (if (c/complex? %) (re %) %))
+        h 0.1
+        n 6
+        ;; u = r^2 ⇒ R = r
+        u (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+        fa (t/f-alphaL u h)
+        i 3
+        r (* i h)]
+    (is (< (Math/abs (- (as-double (get fa i)) r)) 1e-12))
+    (is (= n (count fa)))
+    (let [fb1 (t/f-betaL u h 1.0 n)]
+      (is (< (Math/abs (- (as-double (get fb1 i)) r)) 1e-12)))
+    (let [;; ρ=0.5: sample R at 0.5*r_i; R(r)=r ⇒ value 0.5*r
+          fbh (t/f-betaL u h 0.5 n)
+          expect (* 0.5 r)]
+      (is (< (Math/abs (- (as-double (get fbh i)) expect)) 1e-12)))))
+
+(deftest austern-radial-integral-I-eq-5-5-from-F-lsj-test
+  "**austern-radial-integral-I-eq-5-5-from-F-lsj** matches **F-lsj** + **austern-radial-integral-I-zr-eq-5-5-from-u**."
+  (let [h 0.05
+        n 30
+        phi-i (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+        phi-f (mapv (fn [i] (let [r (* (double i) h)] (* 0.5 r r))) (range n))
+        ua (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+        ub ua
+        M-A 40.0 M-B 41.0 k-a 0.8 k-b 0.9
+        rho (t/austern-zr-chi-exit-mass-ratio M-A M-B)
+        F (t/F-lsj-r-from-bound-reduced-u phi-i phi-f h)
+        I-explicit (t/austern-radial-integral-I-zr-eq-5-5-from-u F ua ub h M-A M-B k-a k-b rho)
+        I-combo (t/austern-radial-integral-I-eq-5-5-from-F-lsj phi-i phi-f ua ub h M-A M-B k-a k-b rho)]
+    (is (Double/isFinite I-explicit))
+    (is (< (Math/abs (- I-explicit I-combo)) 1e-10))))
+
 (deftest austern-radial-integral-eq-5-5-test
   "Austern (5.5): prefactor × Simpson; ZR F·R_α·R_β·r² builder."
   (testing "prefactor (M_B/M_A)(4π/(k_α k_β))"
