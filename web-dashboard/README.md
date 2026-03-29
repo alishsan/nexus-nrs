@@ -51,6 +51,13 @@ Navigate to: http://localhost:3000
 - View comprehensive dashboard
 - Export data for further analysis
 
+## Transfer tab
+
+- **`GET /api/transfer-default?target=16O&reaction_type=d-p`** loads the default **¹⁶O(d,p)** curve using **`dwba.benchmark.o16-dp-handbook`** (handbook ZR radial integral + Austern (5.6)). **`reaction_type=p-d`** keeps the legacy **(p,d)** POST + global-optics default.
+- **`POST /api/transfer`** with **`reaction_type=d-p`** runs the same handbook **¹⁶O(d,p)** implementation for any **`target`** in the JSON body (non-**16O** targets get the same curve; the response **`note`** says so). Lab energies are deuteron **E_lab**; mesh via **`transfer_h`**, **`transfer_r_max`**; **`transfer_L_max`** optional (default 6).
+
+The dashboard `project.clj` includes **`../src`** so these namespaces live in the main **nexus-nrs** tree.
+
 ## API Endpoints
 
 ### GET `/api/health`

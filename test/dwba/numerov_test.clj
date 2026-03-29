@@ -15,7 +15,7 @@
           diff 0.6
           h 0.01
           r-max 20.0
-          u (t/solve-bound-state-numerov E-test l v0 rad diff h r-max)]
+          u (t/solve-bound-state-numerov E-test l v0 rad diff mass-factor h r-max)]
       (is (seq u) "Should return wavefunction")
       (is (= (count u) (int (/ r-max h))) "Length should match expected")
       (is (every? number? u) "All values should be numbers"))))
@@ -29,7 +29,7 @@
           h 0.01
           r-max 20.0]
       (doseq [l [0 1 2]]
-        (let [u (t/solve-bound-state-numerov E-test l v0 rad diff h r-max)]
+        (let [u (t/solve-bound-state-numerov E-test l v0 rad diff mass-factor h r-max)]
           (is (seq u) (format "Should return wavefunction for l=%d" l))
           (is (number? (get u 1)) (format "Should have valid start value for l=%d" l)))))))
 
@@ -42,7 +42,7 @@
           h 0.01
           r-max 20.0]
       (doseq [E-test [-30.0 -20.0 -10.0 -5.0]]
-        (let [u (t/solve-bound-state-numerov E-test l v0 rad diff h r-max)
+        (let [u (t/solve-bound-state-numerov E-test l v0 rad diff mass-factor h r-max)
               u-end (t/bound-state-boundary-value u r-max h)]
           (is (seq u) (format "Should return wavefunction for E=%.1f" E-test))
           (is (number? u-end) (format "Should have valid boundary value for E=%.1f" E-test)))))))
@@ -56,7 +56,7 @@
           h 0.01
           r-max 20.0]
       (doseq [E-test [-30.0 -20.0 -10.0]]
-        (let [u (t/solve-bound-state-numerov E-test l v0 rad diff h r-max)
+        (let [u (t/solve-bound-state-numerov E-test l v0 rad diff mass-factor h r-max)
               nodes (t/count-nodes u)]
           (is (>= nodes 0) (format "Node count should be non-negative for E=%.1f" E-test))
           (is (integer? nodes) (format "Node count should be integer for E=%.1f" E-test)))))))

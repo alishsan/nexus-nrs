@@ -90,6 +90,29 @@
           :Q (+ 938.27 11178.0 (- 1876.136) (- 10257.0))
           :Es-i -16.0 :Es-f -2.0 :label "12C(p,d)11C"}})
 
+(defn- transfer-default-handbook-16o-dp
+  "Default **¹⁶O(d,p)¹⁷O** curve: **`dwba.benchmark.o16-dp-handbook`** (ZR §5.4–5.6 + Austern (5.6)),
+  **E_lab(d)=20 MeV**, same angle grid as the legacy default plot."
+  []
+  (when-not (find-ns 'dwba.benchmark.o16-dp-handbook)
+    (require 'dwba.benchmark.o16-dp-handbook))
+  (let [ds-fn @(requiring-resolve 'dwba.benchmark.o16-dp-handbook/o16-dp-dsigma-handbook-mb-sr)
+        kin-fn @(requiring-resolve 'dwba.benchmark.o16-dp-handbook/o16-dp-kinematics)
+        {:keys [e-cm-i]} (kin-fn)
+        E-default 20.0
+        angles-deg (range 20.0 181.0 20.0)
+        h 0.08
+        r-max 20.0
+        L-max 6
+        transfer-vec
+        (vec (for [theta-deg angles-deg]
+               {:energy E-default
+                :angle theta-deg
+                :differential_cross_section
+                (double (ds-fn theta-deg :e-cm-i e-cm-i :h h :r-max r-max :L-max L-max))}))]
+    {:label "16O(d,p)17O — handbook ZR + Austern (5.6) [o16-dp-handbook]"
+     :transfer transfer-vec}))
+
 (defn- transfer-default-data
   "Build default (p,d) DCS data for a target. Returns {:label ... :transfer (vec of {:energy :angle :differential_cross_section})}."
   [target]
@@ -146,15 +169,31 @@
          :transfer transfer-vec}))))
 
 (defn- transfer-default-response
-  "Ring response for GET /api/transfer-default. target-key is e.g. \"16O\"."
-  [target-key]
-  (let [target (get transfer-targets target-key (get transfer-targets "16O"))
-        {:keys [label transfer]} (transfer-default-data target)]
+  "Ring response for GET /api/transfer-default.
+
+  **Query:** `target` (**16O** | **12C**), `reaction_type` (**p-d** from incident **p**, or **d-p** for **d** on
+  target — **d-p** uses **`o16-dp-handbook`** (only **¹⁶O(d,p)** is implemented; other targets get the same curve with a clarifying label)."
+  [target-key reaction-type-raw]
+  (let [rt (str/lower-case (str/trim (str reaction-type-raw)))
+        d-p? (or (= rt "d-p") (= rt "d_p") (= rt "dp"))
+        {:keys [label transfer]}
+        (if d-p?
+          (let [base (transfer-default-handbook-16o-dp)]
+            (if (= target-key "16O")
+              base
+              {:label (str (:label base) " — handbook preset is ¹⁶O(d,p); target was " target-key)
+               :transfer (:transfer base)}))
+          (transfer-default-data (get transfer-targets target-key (get transfer-targets "16O"))))]
     (response {:success true
                :target label
                :data {:transfer transfer
                       :parameters {:default (str label " at 20 MeV")
-                                   :target label}}})))
+                                   :target label
+                                   :target_key target-key
+                                   :reaction_type (if d-p? "d-p" "p-d")
+                                   :implementation (if d-p?
+                                                      "dwba.benchmark.o16-dp-handbook"
+                                                      "transfer-amplitude-post + global optics")}}})))
 
 (defn- serve-resource [resource-name]
   (if-let [resource (io/resource resource-name)]
@@ -477,63 +516,111 @@
                                                                                   :projectile projectile-str :inelastic_target target-str}}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
+(defn- transfer-data-handbook-16o-dp
+  "Cross table **{:energy :angle :differential_cross_section}** for **handbook** ¹⁶O(d,p) at each lab **E(d)**."
+  [energies angles-deg h r-max L-max S-factor]
+  (when-not (find-ns 'dwba.benchmark.o16-dp-handbook)
+    (require 'dwba.benchmark.o16-dp-handbook))
+  (let [ds-fn @(requiring-resolve 'dwba.benchmark.o16-dp-handbook/o16-dp-dsigma-handbook-mb-sr)
+        m16 (* 16.0 931.494)
+        m-d 1875.613
+        S* (double S-factor)]
+    (vec (for [E-i energies
+               theta-deg angles-deg]
+           (let [e-cmi (phys/lab-to-cm-energy (double E-i) m-d m16)
+                 s (ds-fn theta-deg :e-cm-i e-cmi :h (double h) :r-max (double r-max) :L-max (long L-max)
+                          :S-factor S*)]
+             {:energy (double E-i)
+              :angle (double theta-deg)
+              :differential_cross_section (double s)})))))
+
 (defn- handle-api-transfer [req]
   (try
-    (when-not (find-ns 'dwba.transfer) (require 'dwba.transfer))
-    (when-not (find-ns 'dwba.form-factors) (require 'dwba.form-factors))
-    (let [zero-range-const (or (resolve 'dwba.transfer/zero-range-constant) (do (require 'dwba.transfer) (resolve 'dwba.transfer/zero-range-constant)))
-          transfer-amp (or (resolve 'dwba.transfer/transfer-amplitude-zero-range) (do (require 'dwba.transfer) (resolve 'dwba.transfer/transfer-amplitude-zero-range)))
-          transfer-dsigma-angular (or (resolve 'dwba.transfer/transfer-differential-cross-section-angular) (do (require 'dwba.transfer) (resolve 'dwba.transfer/transfer-differential-cross-section-angular)))
-          solve-bound-state (or (resolve 'dwba.transfer/solve-bound-state) (do (require 'dwba.transfer) (resolve 'dwba.transfer/solve-bound-state)))
-          normalized-overlap (or (resolve 'dwba.form-factors/normalized-overlap) (do (require 'dwba.form-factors) (resolve 'dwba.form-factors/normalized-overlap)))
-          p (params req)
-          energy-list (or (transfer-energies-from p) (parse-doubles (:energies p)))
-          [energies L-values] (ensure-energies-L energy-list (parse-ints (:L_values p)))
-          ws (transfer-ws-from p)
-          optical (transfer-optical-imag-params p)
-          reaction-type (keyword (str (or (when-not (str/blank? (str (:reaction_type p))) (:reaction_type p)) "p-d")))
-          S-factor (parse-double-default (or (:transfer_S p) (:S_factor p)) 1.0)
-          mass-factor phys/mass-factor
-          h (parse-double-default (:transfer_h p) 0.01)
-          r-max (parse-double-default (:transfer_r_max p) 20.0)
-          l-i (parse-int-default (:transfer_l_i p) 1)
-          l-f (parse-int-default (:transfer_l_f p) 0)
-          L-partial (parse-int-default (:transfer_partial_L p) 1)
-          bound-i (solve-bound-state ws 1 l-i nil r-max h)
-          bound-f (solve-bound-state ws 1 l-f nil r-max h)
-          phi-i (:normalized-wavefunction bound-i)
-          phi-f (:normalized-wavefunction bound-f)
-          overlap-approx (normalized-overlap phi-i phi-f r-max h)
-          D0 (zero-range-const reaction-type)
-          angles-deg (range 20.0 181.0 20.0)]
-      ;; DCS vs. angle in mb/sr (`transfer-differential-cross-section-angular` returns mb/sr)
-      (let [transfer-data (for [E-i energies
-                                theta-deg angles-deg]
-                            (try
-                              (let [E-f-approx (* 0.8 E-i)
-                                    k-i (Math/sqrt (* mass-factor E-i))
-                                    k-f (Math/sqrt (* mass-factor E-f-approx))
-                                    T (transfer-amp overlap-approx D0)
-                                    T-amplitudes {L-partial T}
-                                    theta-rad (* theta-deg (/ Math/PI 180.0))
-                                    dsigma-mb-sr (transfer-dsigma-angular T-amplitudes S-factor k-i k-f theta-rad
-                                                                          mass-factor mass-factor 0.0 l-i l-f)]
-                                {:energy E-i :angle theta-deg :differential_cross_section (double dsigma-mb-sr)})
-                              (catch Exception e {:energy E-i :angle theta-deg :differential_cross_section 0.0 :error (.getMessage e)})))]
-        (response {:success true :data {:transfer transfer-data
-                                        :parameters {:energies energies :L_values L-values
-                                                     :ws_params ws :bound_state_ws ws
-                                                     :reaction_type (str reaction-type)
-                                                     :S_factor S-factor
-                                                     :target (str (or (:target p) ""))
-                                                     :r_max r-max :h h
-                                                     :transfer_l_i l-i :transfer_l_f l-f
-                                                     :transfer_partial_L L-partial
-                                                     :optical_imaginary optical}}})))
+    (let [p (params req)
+          target-str (str/trim (str (or (:target p) "16O")))
+          rt-str (str/trim (str (or (:reaction_type p) "p-d")))
+          reaction-type (keyword (str/replace rt-str #"_" "-"))
+          handbook-d-p? (= reaction-type :d-p)]
+      (if handbook-d-p?
+        (let [energy-list (or (transfer-energies-from p) (parse-doubles (:energies p)))
+              [energies L-values] (ensure-energies-L energy-list (parse-ints (:L_values p)))
+              ws (transfer-ws-from p)
+              optical (transfer-optical-imag-params p)
+              S-factor (parse-double-default (or (:transfer_S p) (:S_factor p)) 1.0)
+              h (parse-double-default (:transfer_h p) 0.08)
+              r-max (parse-double-default (:transfer_r_max p) 20.0)
+              L-max (parse-int-default (:transfer_L_max p) 6)
+              angles-deg (range 20.0 181.0 20.0)
+              transfer-data (transfer-data-handbook-16o-dp energies angles-deg h r-max L-max S-factor)
+              note (if (= target-str "16O")
+                     "Bound state and global OM fixed in benchmark; S_factor scales σ."
+                     (str "¹⁶O(d,p) handbook benchmark; request target was " target-str ". S_factor scales σ.; optics recorded for reference only."))]
+          (response {:success true :data {:transfer transfer-data
+                                          :parameters {:energies energies :L_values L-values
+                                                       :ws_params ws :bound_state_ws ws
+                                                       :reaction_type "d-p"
+                                                       :S_factor S-factor
+                                                       :target target-str
+                                                       :r_max r-max :h h :L_max L-max
+                                                       :implementation "dwba.benchmark.o16-dp-handbook"
+                                                       :note note
+                                                       :optical_imaginary optical}}}))
+        (do
+          (when-not (find-ns 'dwba.transfer) (require 'dwba.transfer))
+          (when-not (find-ns 'dwba.form-factors) (require 'dwba.form-factors))
+          (let [zero-range-const (or (resolve 'dwba.transfer/zero-range-constant) (do (require 'dwba.transfer) (resolve 'dwba.transfer/zero-range-constant)))
+                transfer-amp (or (resolve 'dwba.transfer/transfer-amplitude-zero-range) (do (require 'dwba.transfer) (resolve 'dwba.transfer/transfer-amplitude-zero-range)))
+                transfer-dsigma-angular (or (resolve 'dwba.transfer/transfer-differential-cross-section-angular) (do (require 'dwba.transfer) (resolve 'dwba.transfer/transfer-differential-cross-section-angular)))
+                solve-bound-state (or (resolve 'dwba.transfer/solve-bound-state) (do (require 'dwba.transfer) (resolve 'dwba.transfer/solve-bound-state)))
+                normalized-overlap (or (resolve 'dwba.form-factors/normalized-overlap) (do (require 'dwba.form-factors) (resolve 'dwba.form-factors/normalized-overlap)))
+                energy-list (or (transfer-energies-from p) (parse-doubles (:energies p)))
+                [energies L-values] (ensure-energies-L energy-list (parse-ints (:L_values p)))
+                ws (transfer-ws-from p)
+                optical (transfer-optical-imag-params p)
+                reaction-type (keyword (str (or (when-not (str/blank? (str (:reaction_type p))) (:reaction_type p)) "p-d")))
+                S-factor (parse-double-default (or (:transfer_S p) (:S_factor p)) 1.0)
+                mass-factor phys/mass-factor
+                h (parse-double-default (:transfer_h p) 0.01)
+                r-max (parse-double-default (:transfer_r_max p) 20.0)
+                l-i (parse-int-default (:transfer_l_i p) 1)
+                l-f (parse-int-default (:transfer_l_f p) 0)
+                L-partial (parse-int-default (:transfer_partial_L p) 1)
+                bound-i (solve-bound-state ws 1 l-i nil r-max h)
+                bound-f (solve-bound-state ws 1 l-f nil r-max h)
+                phi-i (:normalized-wavefunction bound-i)
+                phi-f (:normalized-wavefunction bound-f)
+                overlap-approx (normalized-overlap phi-i phi-f r-max h)
+                D0 (zero-range-const reaction-type)
+                angles-deg (range 20.0 181.0 20.0)]
+            (let [transfer-data (for [E-i energies
+                                      theta-deg angles-deg]
+                                  (try
+                                    (let [E-f-approx (* 0.8 E-i)
+                                          k-i (Math/sqrt (* mass-factor E-i))
+                                          k-f (Math/sqrt (* mass-factor E-f-approx))
+                                          T (transfer-amp overlap-approx D0)
+                                          T-amplitudes {L-partial T}
+                                          theta-rad (* theta-deg (/ Math/PI 180.0))
+                                          dsigma-mb-sr (transfer-dsigma-angular T-amplitudes S-factor k-i k-f theta-rad
+                                                                                mass-factor mass-factor 0.0 l-i l-f)]
+                                      {:energy E-i :angle theta-deg :differential_cross_section (double dsigma-mb-sr)})
+                                    (catch Exception e {:energy E-i :angle theta-deg :differential_cross_section 0.0 :error (.getMessage e)})))]
+              (response {:success true :data {:transfer transfer-data
+                                              :parameters {:energies energies :L_values L-values
+                                                           :ws_params ws :bound_state_ws ws
+                                                           :reaction_type (str reaction-type)
+                                                           :S_factor S-factor
+                                                           :target (str (or (:target p) ""))
+                                                           :r_max r-max :h h
+                                                           :transfer_l_i l-i :transfer_l_f l-f
+                                                           :transfer_partial_L L-partial
+                                                           :implementation "schematic zero-range + transfer-differential-cross-section-angular"
+                                                           :optical_imaginary optical}}}))))))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
 (defn- handle-transfer-default [req]
-  (try (transfer-default-response (str (or (query-param req "target") "16O")))
+  (try (transfer-default-response (str (or (query-param req "target") "16O"))
+                                  (str (or (query-param req "reaction_type") "p-d")))
        (catch Exception e (response {:success false :error (.getMessage e)}))))
 
 ;; ---------------------------
@@ -569,7 +656,7 @@
     (OPTIONS "/api/transfer" [] (response nil))
     (OPTIONS "/api/transfer-default" [] (response nil))
     (GET "/api/calculate" [] (assoc (response "Use POST to submit calculation") :status 405))
-    (GET "/api/transfer" [] (assoc (response "Use POST for transfer calculation, GET /api/transfer-default for default (p,d) plot") :status 405))
+    (GET "/api/transfer" [] (assoc (response "Use POST for transfer calculation, GET /api/transfer-default?target=16O&reaction_type=d-p for handbook (d,p) default") :status 405))
     (route/files "/" {:root "public"})
     (route/not-found "Not Found")))
 

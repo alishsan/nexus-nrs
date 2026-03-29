@@ -11,6 +11,7 @@
 ;; - 16O: R0 = 2.7 fm, V0 = 62 MeV, a0 = 0.6 fm, l=1
 ;; - Deuteron: R0 = 1.5 fm, V0 = 50 MeV, a0 = 0.6 fm, l=0
 ;;
+;; Sister example (stripping): `examples/example_16Odp.clj` — 16O(d,p)17O (**handbook** namespace `o16-dp-handbook`).
 ;; Use (load-file "examples/example_16Opd.clj") or run from project root.
 ;; Own namespace avoids alias conflicts with dwba.core when loaded from REPL.
 

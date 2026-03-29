@@ -2,6 +2,7 @@
   "Tests for inelastic scattering calculations - Phase 1 & 2: Transition Form Factors and Coupled Channels."
   (:require [clojure.test :refer [deftest is testing]]
             [dwba.inelastic :as inel]
+            [dwba.transfer :as transfer]
             [functions :refer [mass-factor]]
             [complex :refer [re im mul]]))
 
@@ -885,19 +886,19 @@
 (deftest clebsch-gordan-selection-rules-test
   (testing "clebsch-gordan respects selection rules"
     ;; M must equal m1 + m2
-    (let [CG-invalid (inel/clebsch-gordan 1 0 1 0 2 1)]  ; M=1 but m1+m2=0
+    (let [CG-invalid (transfer/clebsch-gordan 1 0 1 0 2 1)]  ; M=1 but m1+m2=0
       (is (= CG-invalid 0.0) "Should be zero when M ≠ m1 + m2"))
     ;; Triangle inequality: |j1 - j2| ≤ J ≤ j1 + j2
-    (let [CG-invalid2 (inel/clebsch-gordan 1 0 1 0 3 0)]  ; J=3 violates triangle inequality
+    (let [CG-invalid2 (transfer/clebsch-gordan 1 0 1 0 3 0)]  ; J=3 violates triangle inequality
       (is (= CG-invalid2 0.0) "Should be zero when triangle inequality violated"))
     ;; Valid coupling
-    (let [CG-valid (inel/clebsch-gordan 1 0 1 0 2 0)]
+    (let [CG-valid (transfer/clebsch-gordan 1 0 1 0 2 0)]
       (is (number? CG-valid) "Should return a number for valid coupling")
       (is (not= CG-valid 0.0) "Should be non-zero for valid coupling"))))
 
 (deftest clebsch-gordan-basic-test
   (testing "clebsch-gordan calculates coefficient"
-    (let [CG (inel/clebsch-gordan 1 0 1 0 2 0)]
+    (let [CG (transfer/clebsch-gordan 1 0 1 0 2 0)]
       (is (number? CG) "Should return a number")
       ;; Clebsch-Gordan coefficients can be larger than 1 in absolute value
       ;; but should be finite

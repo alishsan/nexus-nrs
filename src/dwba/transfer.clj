@@ -206,6 +206,46 @@
   (let [idx (min (dec (count u)) (int (/ r-max h)))]
     (get u idx)))
 
+(defn l-dot-s-nucleon
+  "(l·s) for spin-½: (j(j+1)−l(l+1)−3/4)/2."
+  [ell j]
+  (/ (- (* j (+ j 1.0)) (* ell (+ ell 1.0)) 0.75)
+     2.0))
+
+(defn solve-bound-state-numerov-spin-orbit
+  "Bound reduced radial **u(r)** on **r = n·h**: central Woods–Saxon **[V0 R a]** plus Thomas SO
+   **(V_so, R_so, a_so)** for nucleon **j** (implicit **s = ½**). Same grid/Numerov loop as
+   **`solve-bound-state-numerov`**."
+  [e l v0 rad diff m-f h r-max v-so r-so a-so j]
+  (let [lds (l-dot-s-nucleon (double l) (double j))
+        steps (int (/ (double r-max) (double h)))
+        u0 0.0
+        u1 (m/pow (double h) (inc (long l)))
+        fs (mapv (fn [r]
+                   (if (zero? (double r))
+                     0.0
+                     (f-r-numerov-spin-orbit r e l v0 rad diff m-f v-so r-so a-so lds)))
+                 (take (+ steps 2) (iterate #(+ % (double h)) 0.0)))
+        h2-12 (/ (* (double h) (double h)) 12.0)]
+    (let [results (loop [n      1
+                          u-prev (double u0)
+                          u-curr (double u1)
+                          acc    (transient [u0 u1])]
+                    (if (>= n (dec steps))
+                      (persistent! acc)
+                      (let [fn-1 (double (nth fs (dec n)))
+                            fn   (double (nth fs n))
+                            fn+1 (double (nth fs (inc n)))
+                            term1      (* 2.0 u-curr)
+                            term2      (- u-prev)
+                            inner-sum  (+ (* 10.0 fn u-curr) (* fn-1 u-prev))
+                            term3      (* h2-12 inner-sum)
+                            numerator   (+ term1 term2 term3)
+                            denominator (- 1.0 (* h2-12 fn+1))
+                            u-next      (/ numerator denominator)]
+                        (recur (inc n) u-curr u-next (conj! acc u-next)))))]
+      results)))
+
 (defn count-nodes [u]
   "Count the number of nodes (zeros) in the wavefunction.
    This helps identify the principal quantum number n.
@@ -255,6 +295,72 @@
                    (inc i)
                    u-i
                    (if (zero? u-i) prev-sign current-sign))))))))
+
+(defn- boundary-value-spin-orbit-E
+  [E l v0 rad diff m-f h r-max v-so r-so a-so j]
+  (bound-state-boundary-value
+   (solve-bound-state-numerov-spin-orbit E l v0 rad diff m-f h r-max v-so r-so a-so j)
+   r-max h))
+
+(defn find-eigenenergy-spin-orbit
+  "**E** (MeV, negative) for fixed **V0** + SO by **E**-shooting (**u(r_max)→0**), optionally
+   checking **radial node count** against **`target-nodes`** (pass **nil** to skip)."
+  [v0 rad diff v-so r-so a-so l j m-f h r-max E-scan-lo E-scan-hi E-step target-nodes]
+  (let [f #(boundary-value-spin-orbit-E % l v0 rad diff m-f h r-max v-so r-so a-so j)
+        pts (mapv (fn [e] [e (f e)])
+                  (take-while #(>= % (double E-scan-hi))
+                              (iterate #(+ % (double E-step)) (double E-scan-lo))))
+        br (first
+            (for [i (range (dec (count pts)))
+                  :let [[e0 b0] (nth pts i)
+                        [e1 b1] (nth pts (inc i))]
+                  :when (and (Double/isFinite b0) (Double/isFinite b1)
+                             (not= (m/signum b0) (m/signum b1)))]
+              [(min e0 e1) (max e0 e1)]))]
+    (when br
+      (let [[elo ehi] br
+            ;; Interval-only bisection; |f(root)| for shooting is checked below (not |f|<tol).
+            res (bisection f [elo ehi] 1.0e20 120)
+            eroot (:root res)
+            babs (when eroot (Math/abs (double (f eroot))))
+            u (when (and eroot babs (< babs 5.0e-2))
+                (solve-bound-state-numerov-spin-orbit eroot l v0 rad diff m-f h r-max v-so r-so a-so j))]
+        (when (and u (or (nil? target-nodes) (= (long target-nodes) (long (count-nodes u)))))
+          eroot)))))
+
+(defn find-woods-saxon-v0-binding-spin-orbit
+  "Bisect central **V0** so the **l,j** eigenenergy (Thomas SO + WS volume) matches **−E_bind**.
+   Inner: **`find-eigenenergy-spin-orbit`** at each **V0** with **`target-radial-nodes`** (e.g. **0** for **1d_{5/2}**)."
+  [E-bind l j v-so r-so a-so rad diff m-f h r-max v0-min v0-max v0-step target-radial-nodes]
+  (let [e-t (- (Math/abs (double E-bind)))
+        eigen (fn [v0]
+                (find-eigenenergy-spin-orbit v0 rad diff v-so r-so a-so l j m-f h r-max
+                                               (- (+ v0 5.0)) -0.05 0.25
+                                               target-radial-nodes))
+        pts (mapv (fn [v]
+                    [v (when-let [ev (eigen v)] (- ev e-t))])
+                  (take-while #(<= % (double v0-max))
+                              (iterate #(+ % (double v0-step)) (double v0-min))))
+        br (first
+            (for [i (range (dec (count pts)))
+                  :let [[v0a ga] (nth pts i)
+                        [v0b gb] (nth pts (inc i))]
+                  :when (and (some? ga) (some? gb)
+                             (Double/isFinite ga) (Double/isFinite gb)
+                             (not= (m/signum ga) (m/signum gb)))]
+                  [(min v0a v0b) (max v0a v0b)]))]
+    (if-not br
+      {:converged? false :error "no V0 bracket for E-eigenvalue = -E_bind; widen scan or nodes"}
+      (let [[a0 b0] br
+            ;; If **eigen** fails at an interior **V0**, treat as unbound (**E→0**) so **g = −e_t > 0**.
+            g (fn [v] (- (double (or (eigen v) 0.0)) e-t))
+            res (bisection g [a0 b0] 0.02 80)
+            v-root (:root res)
+            e-found (when v-root (eigen v-root))]
+        (-> res
+            (assoc :E-bind E-bind :eigen-eV e-found :l l :j j
+                   :target-radial-nodes target-radial-nodes)
+            (assoc :v0-scan-range [v0-min v0-max]))))))
 
 (defn scan-energy-range
   "Helper function to scan an energy range and compute wavefunctions.
@@ -952,7 +1058,7 @@
 ;; Radial convention: reduced u(r)=r·R(r) → R(r) for volume overlaps
 ;; ============================================================================
 
-(defn- radial-R-from-reduced-u
+(defn radial-R-from-reduced-u
   "Convert reduced radial amplitudes u(r)=r·R(r) (Numerov convention in this namespace)
   to the radial factor R(r)=u(r)/r used in the **three-dimensional** zero-range POST overlap
 
@@ -977,16 +1083,23 @@
         u-vec))
 
 (defn F-lsj-r-from-bound-reduced-u
-  "Radial **F_{ℓsj}(r)** (bound sector only) for **N. Austern** ZR **Eq. (5.3)** on **r = i·h**.
+  "Radial factor on **r = i·h** for **N. Austern**-style ZR **(5.5)** via **`austern-radial-integral-I-zr-eq-5-5-from-u`**.
 
-  Builds **F(r) = R_{φ_f}^*(r) R_{φ_i}(r)** with **R(r) = u(r)/r** via **`radial-R-from-reduced-u`**.
-  Pass **φ_i**, **φ_f** as reduced **u = rR** from **`solve-bound-state-numerov`** at **E < 0** and
-  **`normalize-bound-state`**. Quantum numbers **(ℓ,s,j)** are **implicit** in which bound states you solved;
-  this function does not re-solve the Schrödinger equation.
+  **This repo:** builds **F(r) = R_{φ_f}^*(r) R_{φ_i}(r)** with **R(r) = u(r)/r** (**`radial-R-from-reduced-u`**).
+  For **(p,d)** pickup, **φ_i** is normally the **bound neutron** and **φ_f** the **bound deuteron** (cluster) —
+  so **F** is a **two-factor overlap**, not the nucleon radial function alone.
 
-  **Not included:** **D₀**, distorted **χ**, or **Y_{ℓ}^{m*}(\\hat r)** — those enter the full 3D element
-  separately. Use the returned vector as **`F-vec`** in **`austern-radial-integrand-zr-F-Ra-Rb-r2`** /
-  **`austern-radial-integral-I-zr-eq-5-5-from-u`**.
+  **Other references (e.g. *Handbook of direct nuclear reaction for retarded theorist* §5.4, pdf p. 61–62):**
+  **F_{ℓsj}(r)** is defined as the **single-particle bound nucleon** radial wavefunction (Schrödinger at negative
+  energy, e.g. WS + spin–orbit), normalized with **∫ F_{ℓsj}^2(r) r^2 dr = 1**; their radial integral then has
+  **∫ χ_β F_{ℓsj} χ_α dr** with **F_{ℓsj}** only under the **distorted waves**. Same physics after folding
+  cluster / **D₀** conventions; the **symbol** **F** is not identical to our **R_f^* R_i** product.
+
+  Pass **φ_i**, **φ_f** as reduced **u = rR** from **`solve-bound-state-numerov`** and **`normalize-bound-state`**.
+  Quantum numbers **(ℓ,s,j)** are **implicit** in those solutions.
+
+  **Not included:** **D₀**, distorted **χ**, or **Y_{ℓ}^{m*}(\\hat r)** — use the returned vector as **`F-vec`**
+  in **`austern-radial-integrand-zr-F-Ra-Rb-r2`** / **`austern-radial-integral-I-zr-eq-5-5-from-u`**.
 
   **Returns:** vector **F(r_i)** for **i = 0 … n−1**, **n = min** lengths of **φ_i**, **φ_f**; entries are
   complex-ready (real bound states → real **F**)."
@@ -1257,7 +1370,8 @@
    
    Returns: Transfer amplitude T_post
    
-   Note: Distorted waves are still max-normalized (see `distorted-wave-optical`); absolute
+   Note: Default distorted waves are max-normalized (`distorted-wave-optical` **`:normalize-mode :max`**); optional
+   **`:coulomb-tail`** (see **`distorted-wave-optical`** doc) gives better partial-wave ratios for Austern **(5.6)**; absolute
    scale vs. unit-flux DWUCK may need asymptotic matching — but u→R fixes the dominant r-measure bug."
   ([chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params]
    (transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params {}))
@@ -1672,56 +1786,71 @@
                                       (* (inc (* 2 j1)) (inc (* 2 j2)) (inc (* 2 j3)) (inc (* 2 J))))))]
       approx-value)))
 
+(defn- assoc-legendre-double-factorial-odd
+  ^double [^long n]
+  (if (<= n 1) 1.0 (* (double n) (assoc-legendre-double-factorial-odd (- n 2)))))
+
+(defn- assoc-legendre-P-mm
+  "**P_m^m(x)**, Ferrers / Condon–Shortley (**m ≥ 0**): **(−1)^m (2m−1)!! (1−x²)^{m/2}**."
+  ^double [^long m ^double x]
+  (if (zero? m)
+    1.0
+    (let [omx2 (max 0.0 (- 1.0 (* x x)))
+          sm (Math/sqrt omx2)
+          df (assoc-legendre-double-factorial-odd (dec (* 2 m)))
+          phase (if (even? m) 1.0 -1.0)]
+      (* phase df (Math/pow sm m)))))
+
+(defn- assoc-legendre-P-lm
+  "Associated Legendre **P_l^m(x)**, Condon–Shortley, integers **0 ≤ m ≤ l**, **x ∈ [−1,1]**.
+  Stable upward recurrence in **l** (Abramowitz & Stegun style)."
+  ^double [^long l ^long m ^double x]
+  (cond
+    (or (< m 0) (> m l)) 0.0
+    (= l m) (assoc-legendre-P-mm m x)
+    (= l (inc m)) (* x (double (+ (* 2 m) 1)) (assoc-legendre-P-mm m x))
+    :else
+    (loop [k (+ m 2)
+           p0 (assoc-legendre-P-mm m x)
+           p1 (* x (double (+ (* 2 m) 1)) (assoc-legendre-P-mm m x))]
+      (let [p2 (/ (- (* (double (dec (* 2 k))) x p1)
+                   (* (double (+ (+ k m) -1)) p0))  ;; (k+m-1)
+                (double (- k m)))]
+        (if (= k l)
+          p2
+          (recur (inc k) p1 p2))))))
+
 (defn spherical-harmonic
-  "Calculate spherical harmonic Y_lm(θ, φ).
-   
-   Spherical harmonics are eigenfunctions of angular momentum:
-   Y_lm(θ, φ) = sqrt((2l+1)/(4π) * (l-m)!/(l+m)!) * P_l^m(cos θ) * exp(im φ)
-   
-   Parameters:
-   - l: Orbital angular momentum quantum number
-   - m: Magnetic quantum number (-l ≤ m ≤ l)
-   - theta: Polar angle (radians)
-   - phi: Azimuthal angle (radians)
-   
-   Returns: Complex number (spherical harmonic value)
-   
-   Example:
-   (spherical-harmonic 1 0 (/ Math/PI 2) 0)  ; Y_10(π/2, 0)"
+  "Spherical harmonic **Y_l^m(θ, φ)** (Condon–Shortley):
+
+  **Y_l^m = (−1)^m √[(2l+1)/(4π) · (l−m)!/(l+m)!] · P_l^m(cos θ) · e^{imφ}**,
+
+  with **P_l^m** from **`assoc-legendre-P-lm`** (replaces the old incorrect **(sin θ)^|m| P_l** patch).
+
+  Parameters: **l ≥ 0**, **|m| ≤ l**, **θ**, **φ** (radians). Returns a complex number.
+
+  Example: `(spherical-harmonic 1 0 (/ Math/PI 2) 0)`."
   [l m theta phi]
-  (let [cos-theta (m/cos theta)
-        ;; Normalization factor
-        ;; Special case: l=0, m=0: Y_00 = 1/√(4π) for all angles
-        norm-factor (if (and (zero? l) (zero? m))
-                     (/ 1.0 (Math/sqrt (* 4.0 Math/PI)))  ; Y_00 = 1/√(4π)
-                     (Math/sqrt (/ (* (inc (* 2 l))
-                                     (m/factorial (- l (Math/abs (int m)))))
-                                  (* 4.0 Math/PI
-                                     (m/factorial (+ l (Math/abs (int m))))))))
-        ;; Associated Legendre polynomial P_l^|m|(cos θ)
-        ;; Special case: l=0, m=0: P_0^0(x) = 1 for all x
-        leg-value (cond
-                   (and (zero? l) (zero? m))
-                   1.0  ; P_0^0 = 1
-                   (zero? m)
-                   (poly/eval-legendre-P l cos-theta)  ; P_l(cos θ)
-                   :else
-                   ;; For |m|>0, we approximate using derivative relation
-                   ;; P_l^m(x) = (-1)^m (1-x²)^(m/2) d^m/dx^m P_l(x)
-                   ;; Simplified: use fastmath's Legendre polynomial
-                   (let [abs-m (Math/abs (int m))
-                         sign-factor (if (even? abs-m) 1.0 -1.0)
-                         sin-theta (Math/sin theta)
-                         x-factor (m/pow sin-theta abs-m)]
-                     (* sign-factor x-factor 
-                        (poly/eval-legendre-P l cos-theta))))
-        ;; Exponential factor: exp(im φ) = cos(mφ) + i sin(mφ)
-        ;; Special case: m=0 or phi=0 gives exp(0) = 1
-        exp-factor (if (or (zero? m) (zero? phi))
-                    (complex-cartesian 1.0 0.0)  ; exp(0) = 1
-                    (complex-polar (* m phi) 1.0))  ; exp(imφ) = complex-polar(mφ, 1)
-        ;; Multiply: norm * P_l^m * exp(im φ)
-        result (mul norm-factor leg-value exp-factor)]
+  (let [cos-theta (Math/cos theta)
+        m-i (int m)
+        ma (long (Math/abs m-i))
+        ;; Normalization √( (2l+1)/(4π) · (l−|m|)! / (l+|m|)! )
+        norm-factor (if (and (zero? l) (zero? ma))
+                     (/ 1.0 (Math/sqrt (* 4.0 Math/PI)))
+                     (Math/sqrt (/
+                                  (* (inc (* 2 (long l)))
+                                     (m/factorial (- (long l) ma)))
+                                  (* 4.0 Math/PI (m/factorial (+ (long l) ma))))))
+        leg-value (if (and (zero? l) (zero? ma))
+                   1.0
+                   (assoc-legendre-P-lm (long l) ma cos-theta))
+        ;; Condon–Shortley (−1)^m on the full harmonic (signed m)
+        condon-phase (if (even? m-i) 1.0 -1.0)
+        exp-factor (if (or (zero? m-i) (zero? phi))
+                    (complex-cartesian 1.0 0.0)
+                    (complex-polar (* m-i phi) 1.0))
+        pref (* condon-phase norm-factor (double leg-value))
+        result (mul (complex-cartesian pref 0.0) exp-factor)]
     result))
 
 (defn transfer-angular-distribution
@@ -2397,6 +2526,47 @@
     (austern-radial-integral-I-zr-eq-5-5-from-u
       F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio)))
 
+;; -----------------------------------------------------------------------------
+;; **Handbook** ZR radial integral (*Handbook of direct nuclear reaction for retarded theorist*):
+;; **F_{ℓsj}(r)** = normalized bound **nucleon** radial **R(r)=u/r**; prefactor **√(4π)(M_B/M_A)/(k_α k_β)**
+;; on the same **∫ F R_α R_β r² dr** grid as **`austern-radial-integrand-zr-F-Ra-Rb-r2`**
+;; (consistent with **`f-alphaL` / `f-betaL`** = **R** from reduced **u**).
+;; Angular multipole sum: still **`austern-reduced-amplitude-beta-sum-eq-5-6`** (same **L_β ℓ L_α** geometry).
+;; -----------------------------------------------------------------------------
+
+(defn handbook-F-lsj-radial-from-neutron-bound-u
+  "**F_{ℓsj}(r_i) = R_n(r_i)** for the **transferred nucleon**: **R = u/r** from **`radial-R-from-reduced-u`** on the
+  **normalized** reduced bound **u** (**`normalize-bound-state`** ⇒ **∫|u|² dr = 1 = ∫|R|² r² dr**, §5.4 style).
+
+  **Not** multiplied by the residual cluster radial factor (deuteron **R_d**); that physics is folded into **D₀** in
+  the handbook-style DWBA."
+  [neutron-u-reduced ^double h]
+  (radial-R-from-reduced-u neutron-u-reduced h))
+
+(defn handbook-radial-integral-prefactor-zr
+  "ZR prefactor **√(4π)\\,(M_B/M_A)/(k_α k_β)** from handbook §5.5.2 (**fm⁻¹** wavenumbers, **M** as in **`ca40-pd-kinematics`**)."
+  ^double [^double M-A ^double M-B ^double k-alpha ^double k-beta]
+  (* (Math/sqrt (* 4.0 Math/PI)) (/ M-B M-A) (/ 1.0 (* k-alpha k-beta))))
+
+(defn handbook-radial-integral-I-zr
+  "Handbook radial integral **I^{\\rm hb}_{L_β L_α}** = **`handbook-radial-integral-prefactor-zr`** × Simpson
+  **`austern-radial-integrand-zr-F-Ra-Rb-r2`** on **F** (e.g. **`handbook-F-lsj-radial-from-neutron-bound-u`**),
+  same **χ_α, χ_β** partial waves as **`austern-radial-integral-I-zr-eq-5-5-from-u`**."
+  [F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
+  (let [h* (double h)
+        integrand (austern-radial-integrand-zr-F-Ra-Rb-r2
+                   F-vec u-alpha u-beta h* (double zr-mass-ratio))]
+    (* (handbook-radial-integral-prefactor-zr (double M-A) (double M-B)
+         (double k-alpha) (double k-beta))
+       (austern-radial-simpson-integrate-real h* integrand))))
+
+(defn handbook-radial-integral-I-zr-from-neutron-bound
+  "Convenience: build **F** from **neutron** bound **u** only, then **`handbook-radial-integral-I-zr`**."
+  [neutron-u-reduced u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
+  (handbook-radial-integral-I-zr
+    (handbook-F-lsj-radial-from-neutron-bound-u neutron-u-reduced h)
+    u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio))
+
 (defn austern-reduced-amplitude-beta-sj-ellm
   "Reduced amplitude **β_{sj}^{ℓm}** exactly as **N. Austern**, *Direct Nuclear Reaction
   Theories* (Wiley, 1970), **Eq. (4.60), p. 84**:
@@ -2440,11 +2610,110 @@
                    (transfer-imaginary-unit-to-integer-power (long ell)))]
     (div Ic denom)))
 
+(defn austern-eq-5-6-cg-product-Lbeta-l-Lalpha
+  "Clebsch–Gordan **product** from **N. Austern**, **Eq. (5.6)**:
+
+  \\[
+  \\langle L_\\beta \\ell; 0,\\, 0 \\,|\\, L_\\alpha\\, 0 \\rangle\\,
+  \\langle L_\\beta \\ell; -m,\\, m \\,|\\, L_\\alpha\\, 0 \\rangle \\, .
+  \\]
+
+  **Notation:** Austern writes **⟨L_β ℓ; m_β, m_ℓ | L_α M⟩** (two **j**’s, then two **m**’s after the semicolon). That is
+  the same coefficient as **⟨L_β m_β; ℓ m_ℓ | L_α M⟩** or Racah/Edmonds **⟨L_β m_β ℓ m_ℓ | L_α M⟩** — not a different coupling.
+  Only **swapping** **L_β ↔ ℓ** would introduce **(−1)^{L_β+ℓ−L_α}**; we keep **L_β** first to match the book.
+
+  **Convention:** **`jam/clebsch-gordan-exact`** implements **⟨j₁ m₁ j₂ m₂ | j₃ m₃⟩** with **j₁ = L_β**, **j₂ = ℓ**,
+  **j₃ = L_α** (matches **`austern-reduced-amplitude-beta-sum-eq-5-6`**).
+
+  **Parameters:** **L_α**, **L_β**, **ℓ** (integers or half-integers supported by **3j**), **m** (projection on **f_{ℓsj,m}**).
+
+  **Returns:** real **double**."
+  ^double [L-alpha L-beta ell m]
+  (let [L-a (double L-alpha)
+        L-b (double L-beta)
+        l (double ell)
+        mproj (double m)]
+    (* (double (jam/clebsch-gordan-exact L-b 0.0 l 0.0 L-a 0.0))
+       (double (jam/clebsch-gordan-exact L-b (- mproj) l mproj L-a 0.0)))))
+
+(defn austern-eq-5-6-admissible-L-beta-values
+  "**L_β** that can contribute to **Austern (5.6)** for fixed entrance partial wave **L_α** and transferred orbital **ℓ**.
+
+  The book writes **∑_{L_α,L_β}**, but **L⃗_α = L⃗_β + ℓ⃗** in angular-momentum coupling fixes **L_β** once **L_α**, **ℓ** are chosen: triangle
+  **|L_α − ℓ| ≤ L_β ≤ L_α + ℓ** (with **L_β ≥ 0**) and **L_α + L_β + ℓ** even so **⟨L_β ℓ; 0,0 | L_α 0⟩** need not vanish.
+  The second **CG** in **(5.6)** uses projections **(−m, m)** on the **ℓ** leg but does not enlarge this **L_β** span for integer **L**.
+
+  **L-max** — keep **L_β ≤ L-max**. Returns a seq of long **L_β** (possibly empty)."
+  [^long L-alpha ^long ell ^long L-max]
+  (let [la L-alpha
+        l ell
+        lb-min (max 0 (Math/abs (- la l)))
+        lb-max (min L-max (+ la l))]
+    (if (> lb-min lb-max)
+      ()
+      (filter (fn [^long lb] (even? (+ la lb l)))
+              (range lb-min (inc lb-max))))))
+
+(defn nuclear-phase-shifts-map
+  "Partial-wave **nuclear** phase shifts **δ_L** (**radians**) for **L = 0 … L-max**, from **`phase-shift`**.
+
+  Same **Coulomb + Woods–Saxon** **S-matrix** matching as elastic **`s-matrix`**: **δ_L** is the phase
+  **relative to Coulomb Hankel** asymptotics. Use **σ_L^total = coulomb-sigma-L + δ_L** in **`austern-radial-rows-with-sigma`**.
+
+  **e-cm** — CM energy (MeV). **v-params** — **`[V0 R0 a0]`** ( **`s-matrix`** convention).
+
+  **Returns:** map **`{L → δ_L}`** (long keys)."
+  [^double e-cm v-params ^long l-max]
+  (into {}
+        (map (fn [^long L]
+               [L (double (phase-shift e-cm v-params L))])
+             (range 0 (inc l-max)))))
+
+(defn- austern-delta-branch
+  ^double [delta-spec ^long L]
+  (cond
+    (nil? delta-spec) 0.0
+    (number? delta-spec) (double delta-spec)
+    (map? delta-spec) (double (or (get delta-spec L) (get delta-spec (int L)) 0.0))
+    (fn? delta-spec) (double (delta-spec L))
+    :else 0.0))
+
+(defn austern-radial-rows-with-sigma
+  "Set **:sigma-alpha** and **:sigma-beta** for Austern **Eq. (5.6)** as **Coulomb + nuclear**:
+
+  **σ_{α L_α} = σ_L^Coulomb(η_α) + δ_α(L_α)**, **σ_{β L_β} = σ_L^Coulomb(η_β) + δ_β(L_β)** (**radians**).
+
+  **δ_α** / **δ_β**: **`nil`** → **0**; a **number** → same for all **L**; a **map** **`{L → δ}`**; or **`(fn [L] δ)`**.
+  Build maps with **`nuclear-phase-shifts-map`**.
+
+  **η_α**, **η_β**: **`channel-sommerfeld-eta`** with **`binding`** **`mass-factor`**, **`Z1Z2ee`** per channel.
+
+  **Coulomb only:** **`austern-radial-rows-with-coulomb-sigma`** (**`nil`** nuclear parts)."
+  [radial-rows eta-alpha eta-beta delta-alpha delta-beta]
+  (let [dα #(austern-delta-branch delta-alpha %)
+        dβ #(austern-delta-branch delta-beta %)]
+    (mapv (fn [row]
+            (let [La (long (:L-alpha row))
+                  Lb (long (:L-beta row))]
+              (-> row
+                  (assoc :sigma-alpha (+ (coulomb-sigma-L La (double eta-alpha)) (dα La)))
+                  (assoc :sigma-beta (+ (coulomb-sigma-L Lb (double eta-beta)) (dβ Lb))))))
+          radial-rows)))
+
+(defn austern-radial-rows-with-coulomb-sigma
+  "Coulomb **σ_L(η)** only (**no** **`phase-shift`** nuclear part). See **`austern-radial-rows-with-sigma`** for **σ_C + δ**.
+
+  **σ_{α L_α} = arg Γ(L_α+1+iη_α)**, same **`coulomb-sigma-L`** as **`Hankel±`**. **η** from **`channel-sommerfeld-eta`**."
+  [radial-rows eta-alpha eta-beta]
+  (austern-radial-rows-with-sigma radial-rows eta-alpha eta-beta nil nil))
+
 (defn austern-reduced-amplitude-beta-sum-eq-5-6
   "Partial-wave form of **β_{sj}^{ℓm}** from **N. Austern**, *Direct Nuclear Reaction Theories*,
   **Eq. (5.6)** — simpler than **(5.4)** because the **z**-axis is along **k_α** and **y** along
   **k_α × k_β**, so **k_β** lies in the **x–z** plane at polar angle **Θ** (CM angle between
   **k_α** and **k_β**).
+
+  **Partial-wave bookkeeping:** for fixed **ℓ**, the **CG** **⟨L_β ℓ; 0,0 | L_α 0⟩** leaves only one independent orbital index — e.g. sum **L_α** and **L_β** in **`austern-eq-5-6-admissible-L-beta-values`** — not an unconstrained **(L_α,L_β)** grid.
 
   \\[
   \\beta_{sj}^{\\ell m}
@@ -2471,9 +2740,9 @@
   (Coulomb ± nuclear, same convention as the code that produces **f**).
 
   **radial-rows** — collection of maps **`{:L-alpha :L-beta :I :sigma-alpha :sigma-beta}`**:
-  **:I** = **I_{L_β L_α}^{ℓsj}**; **σ** in **radians**. Optional **σ** default to **0**.
+  **:I** = **I_{L_β L_α}^{ℓsj}**; **σ** (**radians**). Use **`austern-radial-rows-with-sigma`** (Coulomb + nuclear via **`phase-shift`**) or **`austern-radial-rows-with-coulomb-sigma`** (Coulomb only).
 
-  **Clebsch–Gordan:** `clebsch-gordan-exact` **⟨j₁m₁ j₂m₂|j₃m₃⟩**. **Y:** `spherical-harmonic`.
+  **Clebsch–Gordan product:** **`austern-eq-5-6-cg-product-Lbeta-l-Lalpha`**. **Y:** `spherical-harmonic`.
 
   **Returns:** complex **β_{sj}^{ℓm}** (same object as in **(4.59)** — **s**, **j** are implicit in each **I**)."
   [ell m-ell theta-rad radial-rows]
@@ -2488,14 +2757,12 @@
              Ival (:I row)
              sa (double (or (:sigma-alpha row) 0.0))
              sb (double (or (:sigma-beta row) 0.0))
-             ;; ⟨L_β 0; ℓ 0 | L_α 0⟩,  ⟨L_β −m; ℓ m | L_α 0⟩
-             cg0 (jam/clebsch-gordan-exact L-b 0.0 l 0.0 L-a 0.0)
-             cgm (jam/clebsch-gordan-exact L-b (- mproj) l mproj L-a 0.0)
+             cg-prod (austern-eq-5-6-cg-product-Lbeta-l-Lalpha L-a L-b l mproj)
              La (long (Math/round L-a))
              Lb (long (Math/round L-b))
              ll (long (Math/round l))
              mm (long (Math/round mproj))]
-         (if (< (+ (Math/abs cg0) (Math/abs cgm)) 1e-20)
+         (if (< (Math/abs cg-prod) 1e-20)
            acc
            (let [pow (Math/floorMod (- La Lb ll) 4)
                  iphase (transfer-imaginary-unit-to-integer-power pow)
@@ -2503,7 +2770,7 @@
                  sqrt2lb (Math/sqrt (inc (* 2.0 L-b)))
                  ybm (spherical-harmonic Lb (- mm) th 0.0)
                  Ic (if (number? Ival) (complex-cartesian (double Ival) 0.0) Ival)
-                 pref (complex-cartesian (* sqrt2lb (double cg0) (double cgm)) 0.0)
+                 pref (complex-cartesian (* sqrt2lb cg-prod) 0.0)
                  term (mul iphase eph pref Ic ybm)]
              (add acc term)))))
      (complex-cartesian 0.0 0.0)
@@ -2526,23 +2793,32 @@
   `clebsch-gordan-exact` (Edmonds **⟨j₁m₁ j₂m₂|j₃m₃⟩** order).
 
   **Note:** **(2ℓ+1)^{1/2} β** = **I/i^ℓ** from (4.60), so this term could also be written as
-  **A (-)^{s_b-m_b} (CG_J)(CG_{ℓs})(CG_{ss}) I / i^ℓ** (the **√(2ℓ+1)** cancels)."
-  [A-lsj ell m-ell s j J-A M-A J-B M-B s-a m-a s-b m-b beta]
-  (let [beta-c (if (number? beta) (complex-cartesian (double beta) 0.0) beta)
-        phase (Math/pow -1.0 (- (double s-b) (double m-b)))
-        sqrt-2l1 (Math/sqrt (inc (* 2.0 (double ell))))
-        ;; ⟨J_A j; M_A, M_B - M_A | J_B M_B⟩
-        cg-J (jam/clebsch-gordan-exact (double J-A) (double M-A) (double j)
-               (- (double M-B) (double M-A)) (double J-B) (double M-B))
-        ;; ⟨ℓ s; m, m_a - m_b | j, m - m_b + m_a⟩
-        cg-ls (jam/clebsch-gordan-exact (double ell) (double m-ell) (double s)
-                (- (double m-a) (double m-b)) (double j)
-                (+ (double m-ell) (double m-a) (- (double m-b))))
-        ;; ⟨s_a s_b; m_a, -m_b | s, m_a - m_b⟩
-        cg-ss (jam/clebsch-gordan-exact (double s-a) (double m-a) (double s-b)
-                (- (double m-b)) (double s) (- (double m-a) (double m-b)))
-        pref (* (double A-lsj) phase sqrt-2l1 (double cg-J) (double cg-ls) (double cg-ss))]
-    (mul (complex-cartesian pref 0.0) beta-c)))
+  **A (-)^{s_b-m_b} (CG_J)(CG_{ℓs})(CG_{ss}) I / i^ℓ** (the **√(2ℓ+1)** cancels).
+
+  **Channel vs nucleon spin:** In **⟨s_a s_b | s⟩**, **s** is often **1** (deuteron triplet). The factor
+  **⟨ℓ s; … | j …⟩** couples the transferred nucleon’s **ℓ** to **intrinsic spin ½** to form **j = ℓ ± ½**,
+  so that leg’s second angular momentum is **½**, not **1**. Pass **`:s-for-ls-coupling ½`** when **s = 1**
+  for the deuteron leg; default **`s-for-ls-coupling`** = **s** (backward compatible)."
+  ([A-lsj ell m-ell s j J-A M-A J-B M-B s-a m-a s-b m-b beta]
+   (austern-dw-transition-amplitude-T-term-4-59
+     A-lsj ell m-ell s j J-A M-A J-B M-B s-a m-a s-b m-b beta nil))
+  ([A-lsj ell m-ell s j J-A M-A J-B M-B s-a m-a s-b m-b beta opts]
+   (let [s-ls (double (or (:s-for-ls-coupling opts) s))
+         beta-c (if (number? beta) (complex-cartesian (double beta) 0.0) beta)
+         phase (Math/pow -1.0 (- (double s-b) (double m-b)))
+         sqrt-2l1 (Math/sqrt (inc (* 2.0 (double ell))))
+         ;; ⟨J_A j; M_A, M_B - M_A | J_B M_B⟩
+         cg-J (jam/clebsch-gordan-exact (double J-A) (double M-A) (double j)
+                (- (double M-B) (double M-A)) (double J-B) (double M-B))
+         ;; ⟨ℓ s_ls; m, m_a - m_b | j, m - m_b + m_a⟩
+         cg-ls (jam/clebsch-gordan-exact (double ell) (double m-ell) s-ls
+                 (- (double m-a) (double m-b)) (double j)
+                 (+ (double m-ell) (double m-a) (- (double m-b))))
+         ;; ⟨s_a s_b; m_a, -m_b | s, m_a - m_b⟩
+         cg-ss (jam/clebsch-gordan-exact (double s-a) (double m-a) (double s-b)
+                 (- (double m-b)) (double s) (- (double m-a) (double m-b)))
+         pref (* (double A-lsj) phase sqrt-2l1 (double cg-J) (double cg-ls) (double cg-ss))]
+     (mul (complex-cartesian pref 0.0) beta-c))))
 
 (defn satchler-reduced-amplitude-eq13-diagonal-spin
   "**Not** Austern (4.60). **G. R. Satchler**, *Nucl. Phys.* **55** (1964) **Eq. (13)** in the
@@ -3068,6 +3344,13 @@
    - r-max: Maximum radius (fm)
    - h: Step size (fm)
    - mass-factor: Mass factor (2μ/ħ²)
+   - Optional keywords:
+     - **`:normalize-mode`** — **`:max`** (default): scale χ so **max |χ| = 1** (legacy).
+       **`:coulomb-tail`**: scale χ so **|u_last|** matches **|H_L^+(η, ρ)|** at **ρ = k r_max** with
+       **u = r χ** reduced wave on the last grid point (same **η**, **k** as **`channel-sommerfeld-eta`** /
+       **`Hankel+`**). Improves **relative** partial-wave weights vs interior **`:max`** norm and tames
+       **θ → π** blow-up in multi-**L** Austern **(5.6)** sums when high **L** radial integrals stay large.
+       Pass **`:tail-eta`** (Sommerfeld **η**) and **`:tail-rho`** (**k r_max**, dimensionless).
    
    Returns: Vector of complex distorted wave values χ(r)
    
@@ -3077,7 +3360,9 @@
    Example:
    (let [U-fn (fn [r] (optical-potential-entrance-channel r :d 16 8 10.0 1 0.5 1.5))]
      (distorted-wave-optical 10.0 1 0.5 1.5 U-fn 20.0 0.01 mass-factor))"
-  [E l s j optical-potential-fn r-max h mass-factor]
+  [E l s j optical-potential-fn r-max h mass-factor
+   & {:keys [normalize-mode tail-eta tail-rho]
+      :or {normalize-mode :max}}]
   (let [steps (int (/ r-max h))
         h2-12 (/ (* h h) 12.0)
         ;; Initial conditions: u(0) = 0, u(h) ≈ h^(l+1)
@@ -3104,19 +3389,26 @@
                             ;; Use complex Numerov step
                             un+1 (numerov-step-complex un un-1 fn-1 fn fn+1 h)]
                         (recur (inc n) (conj results-vec un+1)))))
-          ;; Normalize distorted wave by maximum magnitude
-          ;; For scattering states, we normalize using maximum value to get reasonable scale
-          ;; This is a simplified normalization - proper normalization would use
-          ;; asymptotic behavior and S-matrix, but this should work for DWBA
+          u-last (last results)
+          ul (if (number? u-last) (Math/abs u-last) (mag u-last))
+          tail-norm
+          (when (= normalize-mode :coulomb-tail)
+            (let [eta (double tail-eta)
+                  rho (double tail-rho)
+                  Hc (Hankel+ l eta rho)
+                  Hmag (if (number? Hc) (Math/abs Hc) (mag Hc))]
+              (when (and (pos? ul) (pos? Hmag) (Double/isFinite Hmag) (Double/isFinite ul))
+                (/ Hmag ul))))
           max-mag (transduce (map #(if (number? %)
                                     (Math/abs %)
                                     (mag %)))
                             (completing max)
                             Double/NEGATIVE_INFINITY
                             results)
-          norm-factor (if (and (> max-mag 1e-10) (< max-mag 1e20))
-                       (/ 1.0 max-mag)  ; Normalize so max magnitude = 1
-                       1.0)]  ; Don't normalize if already reasonable or invalid
+          norm-factor (or tail-norm
+                          (if (and (> max-mag 1e-10) (< max-mag 1e20))
+                            (/ 1.0 max-mag)
+                            1.0))]
       (mapv (fn [u]
               (if (number? u)
                 (* norm-factor u)

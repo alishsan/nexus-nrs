@@ -125,6 +125,29 @@
       (* mass-factor (- v-eff e)))))
   )
 
+(defn thomas-spin-orbit-central-MeV
+  "Thomas term matching **`dwba.transfer/optical-potential-woods-saxon`** (real part):
+   **V_so · (l·s) · (1/r) · df_so/dr** with **f_so = (1 + exp((r−R_so)/a_so))^{-1}**.
+   Returns MeV to add to the central Woods–Saxon **before** the reduced-mass centrifugal term."
+  [r V-so R-so a-so l-dot-s]
+  (if (or (< r 1e-14) (zero? l-dot-s))
+    0.0
+    (let [f-so (/ 1.0 (+ 1.0 (Math/exp (/ (- r R-so) a-so))))
+          df-so-dr (/ (* f-so (- 1.0 f-so)) a-so)]
+      (* V-so l-dot-s df-so-dr (/ 1.0 r)))))
+
+(defn f-r-numerov-spin-orbit
+  "Centrifugal + Woods–Saxon + Thomas spin-orbit; same Numerov **f** scaling as **`f-r-numerov`**.
+   (No primitive type hints on arity >4 — Clojure compile limit.)"
+  [r e l v0 rad diff mass-factor V-so R-so a-so l-dot-s]
+  (if (zero? r)
+    Double/POSITIVE_INFINITY
+    (let [v-ws (woods-saxon-numerov r v0 rad diff)
+          v-so (thomas-spin-orbit-central-MeV r V-so R-so a-so l-dot-s)
+          v-cent (+ v-ws v-so)
+          v-eff (+ v-cent (/ (* l (inc l)) (* mass-factor r r)))]
+      (* mass-factor (- v-eff e)))))
+
 
 (defn plot-function [f start end step & y];;"plots" function f vs. the first variable
 (mapv (fn [x] [x (apply f x y)] ) (range start end step ))
@@ -818,6 +841,23 @@ precision 0.00001]
           (c/cpowc (c/complex-cartesian 0 (* 2 rho)) a) 
   ( hypergeometric-complex-U a (* 2 (inc L)) (c/complex-cartesian 0 (* 2.0 rho)))
 )))
+
+(defn coulomb-sigma-L
+  "Coulomb partial-wave phase **σ_L(η) = arg Γ(L+1+iη)** (radians), same ingredient as **`Hankel+`** / **`Hankel-`**.
+  Use for Austern **Eq. (5.6)** **e^{i(σ_{αL_α}+σ_{βL_β})}** when the **σ** are taken as **Coulomb** phases.
+
+  **η** must match **`s-matrix`**: with **k = √(mass-factor·E)**, use **`channel-sommerfeld-eta`**. **L** ≥ 0."
+  ^double [^long L ^double eta]
+  (double (c/arg (apply c/complex-cartesian (spec/gamma-complex (v/vec2 (inc (double L)) eta))))))
+
+(defn channel-sommerfeld-eta
+  "**η(E)** for current **`mass-factor`** (2μ/ℏ² in 1/(MeV·fm²)) and **`Z1Z2ee`** (MeV·fm), matching **`s-matrix`**:
+  **k = √(mass-factor·E)**, **η = Z₁Z₂e² · mass-factor / (2k)**. **E** = CM energy (MeV).
+
+  Bind **`mass-factor`** and **`Z1Z2ee`** separately for entrance (α) and exit (β) channels if they differ."
+  ^double [^double E]
+  (let [k (m/sqrt (* mass-factor E))]
+    (* Z1Z2ee mass-factor (/ 1.0 (* 2.0 k)))))
 
 (def ^:dynamic *elastic-imag-ws-params*
   "When bound to [W0 R_W a_W] (W0 > 0), elastic s-matrix uses V(r)=V_C+V_real WS - i W0 f_W(r).

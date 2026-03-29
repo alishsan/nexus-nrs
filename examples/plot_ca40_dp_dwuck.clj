@@ -8,9 +8,12 @@
 ;;   (load-file "examples/plot_ca40_dp_dwuck.clj")
 ;;
 ;; Writes (gitignored):
-;;   output/ca40_dp_dwuck_mb_sr.png      — both in mb/sr (linear y)
-;;   output/ca40_dp_dwuck_mb_sr_log.png  — same data, **log₁₀ y** (easier when scales differ a lot)
-;;   output/ca40_dp_dwuck_normalized.png — each curve divided by its own max(σ)
+;;   output/ca40_dp_dwuck_mb_sr.png         — (d,p): DWUCK vs Nexus-NRS in mb/sr (linear y)
+;;   output/ca40_dp_dwuck_mb_sr_log.png     — (d,p): **log₁₀ y**
+;;   output/ca40_dp_dwuck_normalized.png    — (d,p): σ/σ_max (shape only)
+;;   output/ca40_pd_austern_mb_sr.png       — (p,d): **dwba.benchmark.ca40-pd-austern** (5.5)+(5.6), mb/sr
+;;   output/ca40_pd_austern_mb_sr_log.png   — (p,d): log y
+;;   output/ca40_pd_austern_normalized.png  — (p,d): σ/σ_max
 ;;
 ;; **Scale vs shape:** Flux calibration matches σ at **30°** only (overall factor).
 ;; **Nexus curve** is pure DWBA (`ca40-dp-dsigma-mb-sr`, default **`:angular-mode :coherent`**): Coulomb in χ,
@@ -20,6 +23,7 @@
 
 (ns examples.plot-ca40-dp-dwuck
   (:require [dwba.benchmark.ca40-dwuck :as ca40]
+            [dwba.benchmark.ca40-pd-austern :as pd]
             [incanter.core :as i]
             [incanter.charts :as c]
             [clojure.java.io :as io])
@@ -77,6 +81,29 @@
   (mapv (fn [^double th] (ca40/ca40-dp-dsigma-mb-sr th :h h :r-max r-max))
         theta-deg-vec))
 
+(defn- compute-ca40-pd-austern-curve-mb-sr
+  "⁴⁰Ca(p,d)³⁹Ca **dσ/dΩ (mb/sr)** via **`ca40-pd-angular-curve-austern-eq-56-mb-sr`** (one radial **I** table per call)."
+  [theta-deg-vec {:keys [h r-max L-max e-cm-i S-factor
+                         coherent-m-beta? cm-asymmetry-kappa]
+                  :or {h 0.06 r-max 100.0 L-max 20 e-cm-i 18.0 S-factor 1.0
+                       coherent-m-beta? false
+                       cm-asymmetry-kappa 0.0}}]
+  (mapv :differential_cross_section_mb_sr
+        (pd/ca40-pd-angular-curve-austern-eq-56-mb-sr theta-deg-vec
+          :h h :r-max r-max :L-max L-max :e-cm-i e-cm-i :S-factor S-factor
+          :coherent-m-beta? coherent-m-beta?
+          :cm-asymmetry-kappa cm-asymmetry-kappa)))
+
+(defn- pd-austern-explanation!
+  []
+  (println "
+=== Ca40(p,d) plot: Austern (5.5)+(5.6) + T_m ≈ D₀√(2ℓ+1)β_m ===
+  • **Not** comparable on the same y-axis as **(d,p)** vs DWUCK (different reaction, no listing here).
+  • Coulomb **σ_L(η)** in **(5.6)**; OM in **χ** / **(5.5)**. Options: **`:coherent-m-beta?`**, **`:pd-cm-asymmetry-kappa`**.
+  • See **`dwba.benchmark.ca40-pd-austern`** for kinematics (**Q**) and optics.
+================================================================
+"))
+
 (defn- mismatch-explanation!
   []
   (println "
@@ -91,19 +118,31 @@
 "))
 
 (defn make-plots!
-  "Generate PNGs under `output/`. Returns `{:dwuck-thetas ... :nexus-sigma ...}`.
+  "Generate PNGs under `output/`. Returns a map with **(d,p)** DWUCK/Nexus fields and **(p,d)** Austern fields.
 
-  **Options:** **`:h`**, **`:r-max`** — passed through to `ca40-dp-dsigma-mb-sr`.
+  **Options**
+  - **`:h`**, **`:r-max`** — **(d,p)** `ca40-dp-dsigma-mb-sr`.
+  - **`:pd-h`**, **`:pd-r-max`**, **`:pd-L-max`**, **`:pd-e-cm-i`**, **`:pd-S-factor`**, **`:pd-coherent-m-beta?`**, **`:pd-cm-asymmetry-kappa`**.
 
-  **Note:** Nexus and DWUCK curves are **not** meant to agree; see `mismatch-explanation!` output."
-  [& {:keys [h r-max] :or {h 0.08 r-max 20.0}}]
+  **Note:** Nexus and DWUCK **(d,p)** curves are **not** meant to agree; see `mismatch-explanation!`."
+  [& {:keys [h r-max pd-h pd-r-max pd-L-max pd-e-cm-i pd-S-factor
+             pd-coherent-m-beta? pd-cm-asymmetry-kappa]
+      :or {h 0.08 r-max 20.0
+           pd-h 0.06 pd-r-max 100.0 pd-L-max 20 pd-e-cm-i 18.0 pd-S-factor 1.0
+           pd-coherent-m-beta? false
+           pd-cm-asymmetry-kappa 0.0}}]
   (mismatch-explanation!)
+  (pd-austern-explanation!)
   (let [curve-opts {:h h :r-max r-max}
+        pd-opts {:h pd-h :r-max pd-r-max :L-max pd-L-max :e-cm-i pd-e-cm-i :S-factor pd-S-factor
+                 :coherent-m-beta? pd-coherent-m-beta?
+                 :cm-asymmetry-kappa pd-cm-asymmetry-kappa}
         dwuck-thetas (mapv first dwuck-transfer-reference-mb-sr)
         dwuck-sigma-mb (mapv second dwuck-transfer-reference-mb-sr)
         ;; Finer grid for our curve (smooth line)
         fine-thetas (vec (range 0.0 181.0 3.0))
         nexus-fine-mb (compute-nexus-curve-mb-sr fine-thetas curve-opts)
+        pd-fine-mb (compute-ca40-pd-austern-curve-mb-sr fine-thetas pd-opts)
         ;; Same angles as DWUCK for a pointwise table print
         nexus-at-dwuck-mb (compute-nexus-curve-mb-sr dwuck-thetas curve-opts)
         ;; ~10¹–10²: distorted-wave-optical max-normalization vs DWUCK incoming flux
@@ -166,6 +205,39 @@
         (i/save chart-n "output/ca40_dp_dwuck_normalized.png" :width 900 :height 520)
         (println "Saved: output/ca40_dp_dwuck_normalized.png"))
 
+      ;; ⁴⁰Ca(p,d) Austern bench — separate reaction; own scale (mb/sr)
+      (let [chart-pd (c/xy-plot fine-thetas pd-fine-mb
+                                :title (format (str "40Ca(p,d)39Ca g.s. — dσ/dΩ (mb/sr); Austern (5.5)+(5.6), "
+                                                    "T_m~ D0*sqrt(2l+1)*b_m [h=%.3g, r_max=%.3g, L_max=%s, E_cm,i=%.3g MeV]")
+                                               pd-h pd-r-max pd-L-max pd-e-cm-i)
+                                :x-label "θ_cm (deg)"
+                                :y-label "dσ/dΩ (mb/sr)"
+                                :series-label "Nexus-NRS (ca40-pd-austern)"
+                                :legend true)]
+        (i/save chart-pd "output/ca40_pd_austern_mb_sr.png" :width 900 :height 520)
+        (println "Saved: output/ca40_pd_austern_mb_sr.png"))
+
+      (let [pd-log (series-for-log pd-fine-mb)
+            chart-pd-log (c/xy-plot fine-thetas pd-log
+                                    :title "40Ca(p,d) log y — ca40-pd-austern"
+                                    :x-label "θ_cm (deg)"
+                                    :y-label "dσ/dΩ (mb/sr), logarithmic"
+                                    :series-label "Nexus-NRS"
+                                    :legend true)
+            chart-pd-log (chart-set-log-range-y! chart-pd-log "dσ/dΩ (mb/sr)")]
+        (i/save chart-pd-log "output/ca40_pd_austern_mb_sr_log.png" :width 900 :height 520)
+        (println "Saved: output/ca40_pd_austern_mb_sr_log.png"))
+
+      (let [np (normalize-by-max pd-fine-mb)
+            chart-pd-n (c/xy-plot fine-thetas np
+                                  :title "40Ca(p,d) sigma/sigma_max — ca40-pd-austern (shape)"
+                                  :x-label "θ_cm (deg)"
+                                  :y-label "sigma(theta) / max sigma"
+                                  :series-label "Nexus-NRS"
+                                  :legend true)]
+        (i/save chart-pd-n "output/ca40_pd_austern_normalized.png" :width 900 :height 520)
+        (println "Saved: output/ca40_pd_austern_normalized.png"))
+
       (catch Exception e
         (println "Plot failed:" (.getMessage e))
         (println "Ensure Incanter/JFreeChart can run headless (Java 2D).")))
@@ -177,7 +249,9 @@
      :nexus-at-dwuck-angles-mb-sr-matched nexus-at-dwuck-matched
      :fine-thetas fine-thetas
      :nexus-fine-mb-sr-raw nexus-fine-mb
-     :nexus-fine-mb-sr-matched nexus-fine-matched}))
+     :nexus-fine-mb-sr-matched nexus-fine-matched
+     :pd-austern-opts pd-opts
+     :pd-fine-mb-sr pd-fine-mb}))
 
 ;; Run when loaded via load-file
 (println "\n--- examples.plot-ca40-dp-dwuck ---")

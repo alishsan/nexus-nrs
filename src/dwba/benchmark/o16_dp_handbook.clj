@@ -1,0 +1,230 @@
+(ns dwba.benchmark.o16-dp-handbook
+  "¹⁶O(d,p)¹⁷O g.s. stripping — **handbook** (*Handbook of direct nuclear reaction for retarded theorist*)
+  ZR conventions, parallel to **`dwba.benchmark.ca40-pd-handbook`** with **α = d+¹⁶O**, **β = p+¹⁷O**.
+
+  **Radial (§5.4–5.5.2):** **F_{ℓsj} = R_n = u/r** from the **bound neutron in the residual** (¹⁷O);
+  **`handbook-radial-integral-I-zr-from-neutron-bound`** with **M_A = M(¹⁶O)**, **M_B = M(¹⁷O)**,
+  **zr = M_A/M_B** (**`austern-zr-chi-exit-mass-ratio`**).
+
+  **Angular:** **N. Austern (5.6)** via **`austern-reduced-amplitude-beta-sum-eq-5-6`** + Coulomb **σ_L** on rows.
+
+  **Amplitude:** **T_m ≈ D₀ √(2ℓ+1) β_m** and **`transfer-differential-cross-section`**; **D₀** from **`zero-range-constant :d-p`**.
+
+  **Spin:** **(2J_f+1)/(2J_i+1)** for **J(¹⁶O)=0**, **J(¹⁷O)=5/2** and unpolarized deuteron **× 1/3** (same pattern as **`ca40-dp-dsigma-mb-sr`**, no extra **½** — that factor is for **(p,d)** entrance proton).
+
+  Optics are **Ca40 listing depths/radii scaled** to **A≈16–17**, **Z=8** — illustrative; tune before comparing to experiment."
+  (:require [dwba.transfer :as t]
+            [functions :as fn :refer [mass-factor-from-mu channel-sommerfeld-eta lab-to-cm-energy]]
+            [complex :refer [mag mul add complex-cartesian]]))
+
+(def ^:private o16-dp-bound-ell 2)
+(def ^:private o16-dp-J-i 0.0)
+(def ^:private o16-dp-J-f 2.5)
+
+(defn- m16 [] (* 16.0 931.494))
+(defn- m17 [] (* 17.0 931.494))
+
+(defn o16-dp-kinematics
+  "Map **:mass-factor-i :mass-factor-f :e-cm-i :e-cm-f :k-i :k-f :Q-mev :M-target :M-residual**
+  for **d + ¹⁶O → p + ¹⁷O**.
+
+  **e-cm-i** — CM kinetic (MeV) in **entrance** (**d+¹⁶O**). Nullary **`()`** uses
+  **E_lab(d)=20 MeV** on **¹⁶O** at rest: **`lab-to-cm-energy 20 m_d m_16O`**."
+  ([]
+   (o16-dp-kinematics (lab-to-cm-energy 20.0 1875.613 (m16))))
+  ([^double e-cm-i]
+   (let [m-p 938.272
+         m-d 1875.613
+         m16 (m16)
+         m17 (m17)
+         Q (- (+ m16 m-d) (+ m17 m-p))
+         e-cm-f (+ e-cm-i Q)
+         _ (when (< e-cm-f 0.5)
+             (throw (ex-info "o16-dp-kinematics: e-cm-f too low — raise e-cm-i or check masses"
+                             {:e-cm-i e-cm-i :Q Q :e-cm-f e-cm-f})))
+         mu-i (/ (* m-d m16) (+ m-d m16))
+         mu-f (/ (* m-p m17) (+ m-p m17))
+         mfi (mass-factor-from-mu mu-i)
+         mff (mass-factor-from-mu mu-f)]
+     {:mass-factor-i mfi :mass-factor-f mff
+      :e-cm-i e-cm-i :e-cm-f e-cm-f
+      :k-i (Math/sqrt (* mfi e-cm-i))
+      :k-f (Math/sqrt (* mff e-cm-f))
+      :Q-mev Q
+      :M-target m16 :M-residual m17})))
+
+(defn- r0-sc ^double [^double r-ca ^double a ^double b]
+  (* r-ca (Math/pow (/ a b) (/ 1.0 3.0))))
+
+(defn optical-u-deuteron-o16
+  "Woods–Saxon **d + ¹⁶O**: depths from Ca40(d) listing, **R** radii scaled **(16/40)^{1/3}**, **Z2=8**."
+  [L s j]
+  (let [z1 1 z2 8
+        rc (r0-sc 4.7879 16 40)]
+    (fn [^double r]
+      (t/optical-potential-woods-saxon r
+                                       [97.4 (r0-sc 3.803 16 40) 0.875]
+                                       [70.0 (r0-sc 5.342 16 40) 0.477]
+                                       nil nil nil L s j z1 z2 rc))))
+
+(defn optical-u-proton-o17
+  "Woods–Saxon **p + ¹⁷O**: Ca41(p) block scaled **(17/41)^{1/3}** for radii, **Z2=8**."
+  [L s j]
+  (let [z1 1 z2 8
+        rc (r0-sc 4.3103 17 41)]
+    (fn [^double r]
+      (t/optical-potential-woods-saxon r
+                                       [49.47 (r0-sc 4.0689 17 41) 0.70]
+                                       [19.8 (r0-sc 4.3172 17 41) 0.75]
+                                       24.2 (r0-sc 4.0689 17 41) 0.70 L s j z1 z2 rc))))
+
+(defn- deuteron-j-for-partial-wave
+  ^double [^long L]
+  (+ 1.0 (double L)))
+
+(defn- proton-j-for-partial-wave
+  ^double [^long L]
+  (+ 0.5 (double L)))
+
+(defn- sommerfeld-eta-channel
+  ^double [^double e-cm ^double mfactor ^double z1z2ee]
+  (binding [fn/mass-factor mfactor
+            fn/Z1Z2ee z1z2ee]
+    (channel-sommerfeld-eta e-cm)))
+
+(defn- o16-dp-cm-asymmetry-factor
+  ^double [^double theta-rad ^double kappa]
+  (if (< (Math/abs kappa) 1e-15)
+    1.0
+    (max 1e-300 (+ 1.0 (* kappa (Math/cos theta-rad))))))
+
+(defn- o16-dp-rows-coulomb-sigma
+  [base-rows eta-i eta-f]
+  (t/austern-radial-rows-with-coulomb-sigma base-rows eta-i eta-f))
+
+(defn- o16-dp-filter-rows-by-L-alpha
+  [rows L-alpha-only]
+  (if (nil? L-alpha-only)
+    rows
+    (let [La (long L-alpha-only)]
+      (filterv #(= (long (:L-alpha %)) La) rows))))
+
+(defn o16-dp-radial-I-rows-handbook
+  "Build **{:L-alpha :L-beta :I}** with **`handbook-radial-integral-I-zr-from-neutron-bound`**.
+  **φ_n** — neutron in **¹⁷O** (**l=2**, illustrative well); **χ_α** — **d** on **¹⁶O**; **χ_β** — **p** on **¹⁷O**."
+  [& {:keys [r-max h L-max e-cm-i transfer-ell]
+      :or {r-max 100.0 h 0.05 L-max 20 transfer-ell o16-dp-bound-ell}}]
+  (let [e-cm-i (double (or e-cm-i (:e-cm-i (o16-dp-kinematics))))
+        {:keys [mass-factor-i mass-factor-f e-cm-f k-i k-f M-target M-residual]}
+        (o16-dp-kinematics e-cm-i)
+        zr (t/austern-zr-chi-exit-mass-ratio M-target M-residual)
+        ell (long transfer-ell)
+        phi-n (t/normalize-bound-state
+               (t/solve-bound-state-numerov -4.1438 2 56.0 2.85 0.6 0.048 h r-max) h)
+        z12 (* 1.44 1.0 8.0)
+        eta-i (sommerfeld-eta-channel e-cm-i mass-factor-i z12)
+        eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)
+        rho-i (* k-i r-max)
+        rho-f (* k-f r-max)
+        chi-alpha!
+        (memoize
+         (fn [^long La]
+           (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
+                                     (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
+                                     r-max h mass-factor-i
+                                     :normalize-mode :coulomb-tail
+                                     :tail-eta eta-i :tail-rho rho-i)))
+        chi-beta!
+        (memoize
+         (fn [^long Lb]
+           (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
+                                     (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
+                                     r-max h mass-factor-f
+                                     :normalize-mode :coulomb-tail
+                                     :tail-eta eta-f :tail-rho rho-f)))]
+    (vec
+     (for [La (range 0 (inc (long L-max)))
+           Lb (t/austern-eq-5-6-admissible-L-beta-values La ell (long L-max))
+           :let [Ireal (t/handbook-radial-integral-I-zr-from-neutron-bound
+                        phi-n (chi-alpha! La) (chi-beta! Lb) h
+                        M-target M-residual k-i k-f zr)]
+           :when (> (Math/abs (double Ireal)) 1e-30)]
+       {:L-alpha La :L-beta Lb :I Ireal}))))
+
+(defn o16-dp-T-squared-sum-handbook
+  [theta-rad radial-rows-sigma D0 & {:keys [coherent-m-beta?] :or {coherent-m-beta? false}}]
+  (let [ell (long o16-dp-bound-ell)
+        sqrt2l1 (Math/sqrt (inc (* 2.0 (double ell))))
+        pref (complex-cartesian (* (double D0) sqrt2l1) 0.0)
+        ms (range (- ell) (inc ell))]
+    (if coherent-m-beta?
+      (let [sum-b (reduce (fn [acc ^long m-ell]
+                            (add acc (mul pref (t/austern-reduced-amplitude-beta-sum-eq-5-6
+                                                  ell m-ell theta-rad radial-rows-sigma))))
+                          (complex-cartesian 0.0 0.0)
+                          ms)
+            Tmag (mag sum-b)]
+        (* Tmag Tmag))
+      (double
+       (reduce
+        (fn [^double acc ^long m-ell]
+          (let [beta (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m-ell theta-rad radial-rows-sigma)
+                Tm (mul pref beta)
+                Tmag (mag Tm)]
+            (+ acc (* Tmag Tmag))))
+        0.0
+        ms)))))
+
+(defn o16-dp-dsigma-handbook-mb-sr
+  "**dσ/dΩ (mb/sr)** — handbook **F_n** + Austern **(5.6)** + **`transfer-differential-cross-section`**."
+  [theta-deg & {:keys [e-cm-i r-max h L-max S-factor radial-rows-sigma
+                       coherent-m-beta? cm-asymmetry-kappa L-alpha-only]
+                :or {r-max 100.0 h 0.05 L-max 20 S-factor 1.0
+                     coherent-m-beta? false
+                     cm-asymmetry-kappa 0.0}}]
+  (let [eci (if (some? e-cm-i) (double e-cm-i) (:e-cm-i (o16-dp-kinematics)))
+        {:keys [mass-factor-i mass-factor-f e-cm-f k-i k-f]} (o16-dp-kinematics eci)
+        z12 (* 1.44 1.0 8.0)
+        eta-i (sommerfeld-eta-channel eci mass-factor-i z12)
+        eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)
+        rows-sig (o16-dp-filter-rows-by-L-alpha
+                  (or radial-rows-sigma
+                      (o16-dp-rows-coulomb-sigma
+                       (o16-dp-radial-I-rows-handbook :r-max r-max :h h :L-max L-max :e-cm-i eci)
+                       eta-i eta-f))
+                  L-alpha-only)
+        D0 (t/zero-range-constant :d-p)
+        theta-rad (* (double theta-deg) (/ Math/PI 180.0))
+        T-sq (o16-dp-T-squared-sum-handbook theta-rad rows-sig D0
+               :coherent-m-beta? (boolean coherent-m-beta?))
+        spin (* (t/transfer-nuclear-spin-statistical-factor o16-dp-J-i o16-dp-J-f)
+                (t/transfer-unpolarized-deuteron-spin-factor))
+        ds (t/transfer-differential-cross-section (Math/sqrt (max T-sq 0.0)) S-factor k-i k-f
+                                                  mass-factor-i mass-factor-f)
+        asym (o16-dp-cm-asymmetry-factor theta-rad (double cm-asymmetry-kappa))]
+    (* (double ds) spin asym)))
+
+(defn o16-dp-angular-curve-handbook-mb-sr
+  [theta-degrees & {:keys [e-cm-i r-max h L-max S-factor
+                           coherent-m-beta? cm-asymmetry-kappa L-alpha-only]
+                    :or {r-max 100.0 h 0.05 L-max 20 S-factor 1.0
+                         coherent-m-beta? false
+                         cm-asymmetry-kappa 0.0}}]
+  (let [eci (if (some? e-cm-i) (double e-cm-i) (:e-cm-i (o16-dp-kinematics)))
+        {:keys [mass-factor-i mass-factor-f e-cm-i e-cm-f]} (o16-dp-kinematics eci)
+        z12 (* 1.44 1.0 8.0)
+        eta-i (sommerfeld-eta-channel e-cm-i mass-factor-i z12)
+        eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)
+        base-rows (o16-dp-radial-I-rows-handbook :r-max r-max :h h :L-max L-max :e-cm-i e-cm-i)
+        rows-sig (o16-dp-filter-rows-by-L-alpha
+                  (o16-dp-rows-coulomb-sigma base-rows eta-i eta-f)
+                  L-alpha-only)]
+    (mapv (fn [^double th]
+            {:theta-deg th
+             :differential_cross_section_mb_sr
+             (o16-dp-dsigma-handbook-mb-sr th
+               :radial-rows-sigma rows-sig
+               :e-cm-i eci :r-max r-max :h h :L-max L-max :S-factor S-factor
+               :coherent-m-beta? coherent-m-beta?
+               :cm-asymmetry-kappa cm-asymmetry-kappa)})
+          theta-degrees)))

@@ -19,6 +19,22 @@
 (defn get-value [id]
   (forms/getValue (get-element id)))
 
+(defn- get-value-safe [id]
+  (when-let [el (get-element id)]
+    (forms/getValue el)))
+
+(defn- get-float-safe [id default]
+  (if-let [s (get-value-safe id)]
+    (let [x (js/parseFloat s)]
+      (if (js/isNaN x) default x))
+    default))
+
+(defn- get-int-safe [id default]
+  (if-let [s (get-value-safe id)]
+    (let [x (js/parseInt s 10)]
+      (if (js/isNaN x) default x))
+    default))
+
 (defn set-value! [id value]
   (forms/setValue (get-element id) value))
 
@@ -35,6 +51,40 @@
   (->> (str/split s #",")
        (map str/trim)
        (filter (complement str/blank?))))
+
+(defn load-transfer-default []
+  (let [api-base (:api-base @dashboard-state)
+        tgt (str/trim (or (get-value-safe "transfer_target") "16O"))
+        rt (str/trim (or (get-value-safe "reaction_type") "p-d"))
+        qs (doto (js/URLSearchParams.) (.set "target" tgt) (.set "reaction_type" rt))]
+    (-> (js/fetch (str api-base "/api/transfer-default?" (.toString qs)))
+        (.then (fn [resp]
+                 (if (.-ok resp)
+                   (.json resp)
+                   (js/Promise.reject (js/Error. "transfer-default")))))
+        (.then (fn [data]
+                 (let [ok (aget data "success")
+                       arr (aget data "data" "transfer")
+                       n (when arr (.-length arr))]
+                   (if (and ok arr (pos? (or n 0)))
+                     (let [tr (js->clj arr :keywordize-keys true)
+                           lbl (or (aget data "target")
+                                   (aget data "data" "parameters" "target")
+                                   tgt)]
+                       (swap! dashboard-state
+                              (fn [s]
+                                (assoc s :current-data
+                                       (merge (or (:current-data s) {})
+                                              {:transfer tr
+                                               :transferTargetLabel lbl}))))
+                       (when-let [le (get-element "transfer-default-label")]
+                         (set-text! "transfer-default-label" (str lbl)))
+                       (plot-transfer))
+                     (when-let [le (get-element "transfer-default-label")]
+                       (set-text! "transfer-default-label" (str tgt " " rt " (error)")))))))
+        (.catch (fn [_err]
+                  (when-let [le (get-element "transfer-default-label")]
+                    (set-text! "transfer-default-label" (str tgt " " rt " (offline)"))))))))
 
 ;; Event listeners
 (defn initialize-event-listeners []
@@ -68,7 +118,12 @@
   ;; Reset button
   (let [reset-btn (get-element "reset-btn")]
     (when reset-btn
-      (events/listen reset-btn "click" reset-parameters))))
+      (events/listen reset-btn "click" reset-parameters)))
+
+  (when-let [el (get-element "transfer_target")]
+    (events/listen el "change" (fn [_] (load-transfer-default))))
+  (when-let [el (get-element "reaction_type")]
+    (events/listen el "change" (fn [_] (load-transfer-default)))))
 
 ;; Load default parameters
 (defn load-default-parameters []
@@ -112,7 +167,29 @@
    :E_ex (get-float "E_ex")
    :lambda (get-int "lambda")
    :beta (get-float "beta")
-   :reaction_type (get-value "reaction_type")
+   :reaction_type (or (get-value-safe "reaction_type") "p-d")
+   :target (str/trim (or (get-value-safe "transfer_target") "16O"))
+   :projectile (or (get-value-safe "inelastic_projectile") "p")
+   :inelastic_target (or (get-value-safe "inelastic_target") "12C")
+   :elastic_projectile (or (get-value-safe "elastic_projectile") "p")
+   :elastic_target (or (get-value-safe "elastic_target") "16O")
+   :elastic_target_A (get-int-safe "elastic_target_A" 16)
+   :elastic_target_Z (get-int-safe "elastic_target_Z" 8)
+   ;; Transfer tab (POST /api/transfer; matches public/app.js)
+   :transfer_energies (str/trim (or (get-value-safe "transfer_energies") ""))
+   :transfer_L_values (or (get-value-safe "transfer_L_values") "1")
+   :transfer_S (get-float-safe "transfer_S" 1)
+   :transfer_partial_L (get-int-safe "transfer_partial_L" 1)
+   :transfer_l_i (get-int-safe "transfer_l_i" 1)
+   :transfer_l_f (get-int-safe "transfer_l_f" 0)
+   :transfer_V0 (get-float-safe "transfer_V0" 40)
+   :transfer_R0 (get-float-safe "transfer_R0" 2)
+   :transfer_a0 (get-float-safe "transfer_a0" 0.6)
+   :transfer_W0 (get-float-safe "transfer_W0" 0)
+   :transfer_RW (get-float-safe "transfer_RW" 2)
+   :transfer_aW (get-float-safe "transfer_aW" 0.6)
+   :transfer_r_max (get-float-safe "transfer_r_max" 20)
+   :transfer_h (get-float-safe "transfer_h" 0.01)
    ;; Complex Woods-Saxon for elastic (optical potential)
    :W0 (or (get-float "elastic_W0") 0)
    :R_W (or (get-float "elastic_RW") 2.0)
@@ -241,7 +318,11 @@
                          (let [transfer-data (js->clj (aget result "data" "transfer") :keywordize-keys true)
                                calculation-time (- (js/Date.now) start-time)
                                current-data (:current-data @dashboard-state)
-                               merged (merge (or current-data {}) {:transfer transfer-data})]
+                               lbl (or (aget result "data" "parameters" "target")
+                                       (:transferTargetLabel current-data))
+                               merged (merge (or current-data {})
+                                             {:transfer transfer-data
+                                              :transferTargetLabel lbl})]
                            (swap! dashboard-state assoc :current-data merged)
                            (update-all-plots)
                            (show-status (str "Transfer reaction calculated in " calculation-time "ms") "success"))
@@ -527,29 +608,51 @@
                              :margin {:t 50 :b 50 :l 60 :r 30}})]
         (.newPlot plotly "inelastic-plot" plot-data layout (clj->js {:responsive true}))))))
 
-;; Plot transfer
+;; Plot transfer (angle grid like handbook default / POST d-p, or legacy L vs E)
 (defn plot-transfer []
-  (let [data (:transfer (:current-data @dashboard-state))]
-    (when (and data (not (empty? data)))
-      (let [traces (reduce (fn [traces point]
-                             (let [L (:L point)]
-                               (update traces L
-                                        (fn [trace]
-                                          (if trace
-                                            (-> trace
-                                                (update :x conj (:energy point))
-                                                (update :y conj (:differential-cross-section point)))
-                                            {:x [(:energy point)]
-                                             :y [(:differential-cross-section point)]
-                                             :name (str "L = " L)
-                                             :type "scatter"
-                                             :mode "lines+markers"
-                                             :line {:width 3}
-                                             :marker {:size 6}})))))
-                           {} data)
-            plot-data (clj->js (vals traces))
+  (let [cd (:current-data @dashboard-state)
+        data (:transfer cd)]
+    (when (and data (seq data))
+      (let [pt (first data)
+            has-angle? (contains? pt :angle)
+            log-floor 1e-40
+            label (or (:transferTargetLabel cd) "Transfer")
+            x-title (if has-angle? "Scattering angle (CM, degrees)" "Energy (MeV)")
+            ds #(or (:differential_cross_section %) (:differential-cross-section %))
+            plot-data
+            (if has-angle?
+              (let [energies (sort (distinct (map :energy data)))]
+                (clj->js
+                 (vec (for [E energies
+                            :let [pts (vec (filter #(= (:energy %) E) data))]]
+                        {:x (mapv :angle pts)
+                         :y (mapv #(max (double (or (ds %) 0.0)) log-floor) pts)
+                         :name (if (> (count energies) 1)
+                                 (str "E = " E " MeV")
+                                 (str label ", E = " E " MeV"))
+                         :type "scatter"
+                         :mode "lines+markers"
+                         :line {:width 3}
+                         :marker {:size 6}}))))
+              (let [traces (reduce (fn [traces point]
+                                     (let [L (:L point)]
+                                       (update traces L
+                                               (fn [trace]
+                                                 (if trace
+                                                   (-> trace
+                                                       (update :x conj (:energy point))
+                                                       (update :y conj (ds point)))
+                                                   {:x [(:energy point)]
+                                                    :y [(ds point)]
+                                                    :name (str "L = " L)
+                                                    :type "scatter"
+                                                    :mode "lines+markers"
+                                                    :line {:width 3}
+                                                    :marker {:size 6}})))))
+                                   {} data)]
+                (clj->js (vec (vals traces)))))
             layout (clj->js {:title "Transfer Reaction Differential Cross-Section"
-                             :xaxis {:title "Energy (MeV)" :gridcolor "#e0e0e0"}
+                             :xaxis {:title x-title :gridcolor "#e0e0e0"}
                              :yaxis {:title "dσ/dΩ (mb/sr)" :type "log" :gridcolor "#e0e0e0"}
                              :plot_bgcolor "rgba(0,0,0,0)"
                              :paper_bgcolor "rgba(0,0,0,0)"
@@ -587,7 +690,8 @@
 (defn init []
   (when (and js/document (.-readyState js/document))
     (initialize-event-listeners)
-    (load-default-parameters)))
+    (load-default-parameters)
+    (load-transfer-default)))
 
 ;; Set up initialization
 (if (= (.-readyState js/document) "complete")

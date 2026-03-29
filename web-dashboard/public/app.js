@@ -10,36 +10,39 @@ class DWBADashboard {
         this.initializeEventListeners();
         this.loadDefaultParameters();
         this.checkApiHealth();
-        this.loadTransferDefault();  // (p,d) default DCS on Transfer tab
+        this.loadTransferDefault();  // default DCS on Transfer tab (handbook for 16O+d,p)
         if (this.apiBase === dashboardUrl) {
             this.showApiNotice(dashboardUrl);
         }
     }
 
-    /** Load default (p,d) DCS for the Transfer tab; uses selected target nucleus. */
+    /** Load default DCS for the Transfer tab (`/api/transfer-default`): 16O+d,p → handbook o16-dp-handbook. */
     async loadTransferDefault() {
         const targetEl = document.getElementById('transfer_target');
         const target = targetEl ? targetEl.value : '16O';
+        const rtEl = document.getElementById('reaction_type');
+        const reactionType = rtEl ? rtEl.value : 'p-d';
         const labelEl = document.getElementById('transfer-default-label');
+        const q = new URLSearchParams({ target, reaction_type: reactionType });
         try {
-            const r = await fetch(`${this.apiBase}/api/transfer-default?target=${encodeURIComponent(target)}`);
+            const r = await fetch(`${this.apiBase}/api/transfer-default?${q.toString()}`);
             if (!r.ok) {
-                if (labelEl) labelEl.textContent = target + '(p,d) (load failed)';
+                if (labelEl) labelEl.textContent = `${target} ${reactionType} (load failed)`;
                 return;
             }
             const json = await r.json();
             if (json.success && json.data && json.data.transfer && json.data.transfer.length) {
                 this.currentData = this.currentData || {};
                 this.currentData.transfer = json.data.transfer;
-                this.currentData.transferTargetLabel = json.target || json.data?.parameters?.target || (target + '(p,d)');
+                this.currentData.transferTargetLabel = json.target || json.data?.parameters?.target || target;
                 if (labelEl) labelEl.textContent = this.currentData.transferTargetLabel;
                 this.plotTransfer();
             } else if (json.error && labelEl) {
-                labelEl.textContent = target + '(p,d) (error)';
+                labelEl.textContent = `${target} ${reactionType} (error)`;
             }
         } catch (e) {
             console.warn('Transfer default not loaded:', e.message);
-            if (labelEl) labelEl.textContent = target + '(p,d) (offline)';
+            if (labelEl) labelEl.textContent = `${target} ${reactionType} (offline)`;
         }
     }
 
@@ -99,8 +102,11 @@ class DWBADashboard {
             if (btn) btn.addEventListener('click', () => this[method]());
         });
 
-        // Target nucleus change: reload default (p,d) plot
+        // Target / reaction: reload default plot (16O + d-p uses handbook pipeline)
         document.getElementById('transfer_target')?.addEventListener('change', () => {
+            this.loadTransferDefault();
+        });
+        document.getElementById('reaction_type')?.addEventListener('change', () => {
             this.loadTransferDefault();
         });
 
@@ -547,12 +553,14 @@ class DWBADashboard {
             if (raw) this.currentData.transfer = raw;
             const lab = result.data?.parameters?.reaction_type;
             const s = result.data?.parameters?.S_factor;
+            const impl = result.data?.parameters?.implementation;
             const lbl = document.getElementById('transfer-default-label');
             if (lbl && lab != null && s != null) {
-                lbl.textContent = `${lab}, S=${s} (calculated)`;
+                lbl.textContent = impl ? `${lab}, S=${s} — ${impl}` : `${lab}, S=${s} (calculated)`;
             }
             this.updateAllPlots();
-            this.showStatus(`Transfer done in ${Date.now() - startTime}ms`, 'success');
+            const implShort = impl && impl.length > 42 ? impl.substring(0, 40) + '…' : impl;
+            this.showStatus(`Transfer done in ${Date.now() - startTime}ms${implShort ? ` (${implShort})` : ''}`, 'success');
         } catch (error) {
             console.error('Calculation error:', error);
             let msg = error.message;
@@ -963,7 +971,7 @@ class DWBADashboard {
         if (hasAngle) {
             xTitle = 'Scattering angle (CM, degrees)';
             const energies = [...new Set(data.map(p => p.energy))].sort((a, b) => a - b);
-            const label = this.currentData.transferTargetLabel || 'Transfer (p,d)';
+            const label = this.currentData.transferTargetLabel || 'Transfer';
             // Log scale can't show 0; floor tiny values so L=1 node at 90° doesn't drop off chart
             const logFloor = 1e-40;
             plotData = energies.map(E => {

@@ -497,8 +497,8 @@
                                 <div class="parameter-group">
                                     <label for="reaction_type">Reaction type</label>
                                     <select class="form-select" id="reaction_type">
-                                        <option value="p-d" selected>(p,d) – stripping (default)</option>
-                                        <option value="d-p">(d,p) – neutron transfer</option>
+                                        <option value="p-d" selected>(p,d) – pickup (default)</option>
+                                        <option value="d-p">(d,p) – stripping (¹⁶O: handbook ZR)</option>
                                         <option value="d-n">(d,n) – proton transfer</option>
                                         <option value="n-d">(n,d) – proton pickup</option>
                                         <option value="alpha-t">(α,t) – proton transfer</option>
@@ -639,7 +639,7 @@
                     </div>
                     <div class="plot-container">
                         <div class="plot-title">Transfer Reaction Differential Cross-Section</div>
-                        <p class="text-muted small mb-2">Default: <span id="transfer-default-label">16O(p,d)15O</span> at 20 MeV. Change target or use Calculate to run with current parameters.</p>
+                        <p class="text-muted small mb-2">Default curve (on load / when you change <strong>target</strong> or <strong>reaction type</strong>): <span id="transfer-default-label">16O(p,d)15O</span> at 20 MeV lab. <strong>¹⁶O + (d,p)</strong> uses the <strong>handbook</strong> pipeline (<code>o16-dp-handbook</code>). Use Calculate for a full scan with current energies and mesh.</p>
                         <div id="transfer-plot" style="height: 500px;"></div>
                     </div>
                 </div>

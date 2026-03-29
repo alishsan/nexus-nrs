@@ -3,18 +3,63 @@
   (:require [clojure.test :refer :all]
             [dwba.transfer :as t]
             [dwba.angular-momentum :as jam]
-            [functions :refer :all]
+            [functions :as fn :refer :all]
             [fastmath.core :as m]
-            [complex :as c :refer [re im mag complex-cartesian]]))
+            [complex :as c :refer [re im mag complex-cartesian add mul complex-polar]]))
 
 (def ws-params [50.0 2.0 0.6])  ; V0=50 MeV, R0=2.0 fm, a0=0.6 fm
 
+(defn- beta-sum-eq-5-6-reference-naive
+  "Independent recomputation of Austern Eq. (5.6): explicit CG pair (no `austern-eq-5-6-cg-product`), same phases and `spherical-harmonic` as production."
+  [ell m-ell theta-rad radial-rows]
+  (let [l (double ell)
+        mproj (double m-ell)
+        th (double theta-rad)
+        i-pow (fn [^long p]
+                (case (Math/floorMod p 4)
+                  0 (complex-cartesian 1.0 0.0)
+                  1 (complex-cartesian 0.0 1.0)
+                  2 (complex-cartesian -1.0 0.0)
+                  3 (complex-cartesian 0.0 -1.0)))]
+    (reduce
+     (fn [acc row]
+       (let [L-a (double (:L-alpha row))
+             L-b (double (:L-beta row))
+             Ival (:I row)
+             sa (double (or (:sigma-alpha row) 0.0))
+             sb (double (or (:sigma-beta row) 0.0))
+             cg-prod (* (double (jam/clebsch-gordan-exact L-b 0.0 l 0.0 L-a 0.0))
+                        (double (jam/clebsch-gordan-exact L-b (- mproj) l mproj L-a 0.0)))
+             La (long (Math/round L-a))
+             Lb (long (Math/round L-b))
+             ll (long (Math/round l))
+             mm (long (Math/round mproj))]
+         (if (< (Math/abs cg-prod) 1e-20)
+           acc
+           (let [pow (Math/floorMod (- La Lb ll) 4)
+                 iphase (i-pow pow)
+                 eph (complex-polar (+ sa sb) 1.0)
+                 sqrt2lb (Math/sqrt (inc (* 2.0 L-b)))
+                 ybm (t/spherical-harmonic Lb (- mm) th 0.0)
+                 Ic (if (number? Ival) (complex-cartesian (double Ival) 0.0) Ival)
+                 pref (complex-cartesian (* sqrt2lb cg-prod) 0.0)
+                 term (mul iphase eph pref Ic ybm)]
+             (add acc term)))))
+     (complex-cartesian 0.0 0.0)
+     radial-rows)))
+
+(defn- max-abs-diff-complex [a b]
+  (max (Math/abs (- (re a) (re b)))
+       (Math/abs (- (im a) (im b)))))
+
 (deftest sign-changes-l0-test
   (testing "Sign changes for l=0 (1s state)"
-    (let [energies (range -14.0 -17.0 -0.1)
+    (let [h 0.001
+          r-max 20.0
+          energies (range -5.0 -25.0 -0.12)
           results (mapv (fn [E]
-                         (let [u (t/solve-bound-state-numerov E 0 50.0 2.0 0.6 mass-factor 0.001 20.0)
-                               boundary-val (last u)]
+                         (let [u (t/solve-bound-state-numerov E 0 50.0 2.0 0.6 mass-factor h r-max)
+                               boundary-val (t/bound-state-boundary-value u r-max h)]
                            {:energy E :boundary boundary-val}))
                        energies)
           sign-changes (filter some?
@@ -787,6 +832,35 @@
     (is (Double/isFinite I-explicit))
     (is (< (Math/abs (- I-explicit I-combo)) 1e-10))))
 
+(deftest handbook-radial-integral-I-zr-prefactor-vs-austern-test
+  "Same **F**, **u** grids: **handbook** integral / Austern **(5.5)** integral = **√(4π)/(4π) = 1/√(4π)**."
+  (let [h 0.05
+        n 30
+        phi-i (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+        phi-f (mapv (fn [i] (let [r (* (double i) h)] (* 0.5 r r))) (range n))
+        ua (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+        ub ua
+        M-A 40.0 M-B 41.0 k-a 0.8 k-b 0.9
+        rho (t/austern-zr-chi-exit-mass-ratio M-A M-B)
+        F (t/F-lsj-r-from-bound-reduced-u phi-i phi-f h)
+        I-a (t/austern-radial-integral-I-zr-eq-5-5-from-u F ua ub h M-A M-B k-a k-b rho)
+        I-h (t/handbook-radial-integral-I-zr F ua ub h M-A M-B k-a k-b rho)
+        expect-ratio (/ (Math/sqrt (* 4.0 Math/PI)) (* 4.0 Math/PI))]
+    (is (Double/isFinite I-a))
+    (is (Double/isFinite I-h))
+    (is (< (Math/abs (- (/ I-h I-a) expect-ratio)) 1e-9))))
+
+(deftest handbook-F-lsj-neutron-is-radial-R-test
+  (let [as-double #(double (if (c/complex? %) (re %) %))
+        h 0.05
+        n 20
+        u (mapv (fn [i] (let [r (* (double i) h)] (* r (Math/exp (- r))))) (range n))
+        F (t/handbook-F-lsj-radial-from-neutron-bound-u u h)
+        r (t/radial-R-from-reduced-u u h)]
+    (is (= (count F) (count r)))
+    (dotimes [i (count F)]
+      (is (< (Math/abs (- (as-double (get F i)) (as-double (get r i)))) 1e-12)))))
+
 (deftest austern-radial-integral-eq-5-5-test
   "Austern (5.5): prefactor × Simpson; ZR F·R_α·R_β·r² builder."
   (testing "prefactor (M_B/M_A)(4π/(k_α k_β))"
@@ -815,6 +889,69 @@
       (is (Double/isFinite Izr))
       (is (pos? Izr)))))
 
+(deftest coulomb-sigma-L-eta-zero-L0-test
+  (is (< (Math/abs (fn/coulomb-sigma-L 0 0.0)) 1e-9)))
+
+(deftest channel-sommerfeld-eta-finite-test
+  (is (Double/isFinite (fn/channel-sommerfeld-eta 5.0)))
+  (is (pos? (fn/channel-sommerfeld-eta 5.0))))
+
+(deftest austern-radial-rows-with-coulomb-sigma-test
+  "**austern-radial-rows-with-coulomb-sigma** fills σ from **`fn/coulomb-sigma-L`** only."
+  (let [rows [{:L-alpha 0 :L-beta 2 :I 1.0}]
+        eta-a 0.15 eta-b 0.22
+        out (t/austern-radial-rows-with-coulomb-sigma rows eta-a eta-b)
+        r0 (first out)]
+    (is (= 1 (count out)))
+    (is (< (Math/abs (- (:sigma-alpha r0) (fn/coulomb-sigma-L 0 eta-a))) 1e-12))
+    (is (< (Math/abs (- (:sigma-beta r0) (fn/coulomb-sigma-L 2 eta-b))) 1e-12))
+    (is (= 1.0 (:I r0)))))
+
+(deftest austern-radial-rows-with-sigma-includes-nuclear-test
+  "**austern-radial-rows-with-sigma** adds nuclear δ map to Coulomb σ."
+  (let [rows [{:L-alpha 0 :L-beta 1 :I 2.0}]
+        eta-a 0.12 eta-b 0.18
+        dα {0 0.05} dβ {1 -0.03}
+        r0 (first (t/austern-radial-rows-with-sigma rows eta-a eta-b dα dβ))]
+    (is (< (Math/abs (- (:sigma-alpha r0) (+ (fn/coulomb-sigma-L 0 eta-a) 0.05))) 1e-12))
+    (is (< (Math/abs (- (:sigma-beta r0) (+ (fn/coulomb-sigma-L 1 eta-b) -0.03))) 1e-12))))
+
+(deftest nuclear-phase-shifts-map-smoke-test
+  (let [V [50.0 2.0 0.6]
+        m (t/nuclear-phase-shifts-map 1.5 V 2)]
+    (is (= 3 (count m)))
+    (is (every? #(contains? m %) [0 1 2]))
+    (is (every? #(Double/isFinite (double %)) (vals m)))))
+
+(deftest austern-eq-5-6-cg-product-Lbeta-l-Lalpha-test
+  "Eq. (5.6) CG product matches **jam/clebsch-gordan-exact** pair; **L_α=L_β=ℓ=m=0** ⇒ **1**."
+  (is (< (Math/abs (- (t/austern-eq-5-6-cg-product-Lbeta-l-Lalpha 0 0 0 0) 1.0)) 1e-9))
+  (let [La 1.0 Lb 1.0 ell 1.0 m 0.0
+        p (t/austern-eq-5-6-cg-product-Lbeta-l-Lalpha La Lb ell m)
+        g0 (jam/clebsch-gordan-exact Lb 0.0 ell 0.0 La 0.0)
+        gm (jam/clebsch-gordan-exact Lb (- m) ell m La 0.0)]
+    (is (< (Math/abs (- p (* g0 gm))) 1e-12))))
+
+(deftest austern-eq-5-6-admissible-L-beta-values-test
+  "Triangle + parity for **⟨L_β ℓ 0 0 | L_α 0⟩**; filtering inadmissible **(L_α,L_β)** leaves **β** unchanged."
+  (is (= [3] (vec (t/austern-eq-5-6-admissible-L-beta-values 0 3 5))))
+  (is (= [0 2 4 6] (vec (t/austern-eq-5-6-admissible-L-beta-values 3 3 6))))
+  (let [Lmax 4 ell 2 m 0 th 0.55
+        mk (fn [La Lb] {:L-alpha La :L-beta Lb :I 1.0 :sigma-alpha 0.0 :sigma-beta 0.0})
+        all-rows (vec (for [La (range 0 (inc Lmax))
+                            Lb (range 0 (inc Lmax))]
+                        (mk La Lb)))
+        filt-rows (vec (for [La (range 0 (inc Lmax))
+                             Lb (t/austern-eq-5-6-admissible-L-beta-values La ell Lmax)]
+                         (mk La Lb)))
+        b-all (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m th all-rows)
+        b-filt (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m th filt-rows)]
+    (is (< (max-abs-diff-complex b-all b-filt) 1e-9))
+    (doseq [mm (range (- ell) (inc ell))
+            :let [ba (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell mm th all-rows)
+                  bf (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell mm th filt-rows)]]
+      (is (< (max-abs-diff-complex ba bf) 1e-9) (str "m=" mm)))))
+
 (deftest austern-reduced-amplitude-beta-sum-eq-5-6-test
   "Austern (5.6): single L_α=L_β=ℓ=m=0 row with σ=0, I=1 ⇒ β = Y_00(Θ,0) = 1/√(4π)."
   (let [b (t/austern-reduced-amplitude-beta-sum-eq-5-6
@@ -823,6 +960,77 @@
         y00 (/ 1.0 (Math/sqrt (* 4.0 Math/PI)))]
     (is (< (Math/abs (- (re b) y00)) 1e-9))
     (is (< (Math/abs (im b)) 1e-9))))
+
+(deftest austern-eq-5-6-beta-sum-matches-naive-reference-test
+  "`austern-reduced-amplitude-beta-sum-eq-5-6` matches an independent row-wise sum (explicit CGs, same Y and σ phases)."
+  (let [tol 1e-9
+        cases [[0 0 0.21
+                [{:L-alpha 0 :L-beta 0 :I 1.0 :sigma-alpha 0.0 :sigma-beta 0.0}
+                 {:L-alpha 1 :L-beta 1 :I -0.4 :sigma-alpha 0.0 :sigma-beta 0.0}
+                 {:L-alpha 2 :L-beta 2 :I 0.25 :sigma-alpha 0.11 :sigma-beta -0.07}]]
+               [0 0 (/ Math/PI 3)
+                [{:L-alpha 0 :L-beta 0 :I (complex-cartesian 0.8 -0.3) :sigma-alpha 0.0 :sigma-beta 0.0}]]
+               [1 0 0.55
+                [{:L-alpha 0 :L-beta 1 :I 1.0 :sigma-alpha 0.0 :sigma-beta 0.0}
+                 {:L-alpha 2 :L-beta 1 :I -0.35 :sigma-alpha 0.3 :sigma-beta 0.15}]]
+               [1 0 0.12
+                [{:L-alpha 1 :L-beta 0 :I (complex-cartesian 2.0 1.0) :sigma-alpha 1.2 :sigma-beta -0.4}]]
+               [2 0 0.88
+                [{:L-alpha 0 :L-beta 2 :I 0.5 :sigma-alpha 0.0 :sigma-beta 0.0}
+                 {:L-alpha 2 :L-beta 2 :I -0.1 :sigma-alpha 0.05 :sigma-beta 0.05}]]
+               [2 -1 1.05
+                [{:L-alpha 1 :L-beta 2 :I 1.7 :sigma-alpha 0.0 :sigma-beta 0.0}
+                 {:L-alpha 3 :L-beta 2 :I -0.9 :sigma-alpha 0.22 :sigma-beta 0.0}]]
+               [2 2 0.4
+                [{:L-alpha 0 :L-beta 2 :I 0.3 :sigma-alpha 0.0 :sigma-beta 0.0}]]
+               [3 0 (/ Math/PI 4)
+                [{:L-alpha 1 :L-beta 3 :I 1.0 :sigma-alpha 0.0 :sigma-beta 0.0}]]]]
+    (doseq [[ell m th rows] cases]
+      (let [code (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m th rows)
+            ref (beta-sum-eq-5-6-reference-naive ell m th rows)
+            err (max-abs-diff-complex code ref)]
+        (is (< err tol)
+            (str "ell=" ell " m=" m " err=" err))))))
+
+(deftest austern-eq-5-6-beta-sum-linearity-rows-test
+  "Eq. (5.6) sum is linear in rows: β(rows1⊕rows2) = β(rows1) + β(rows2)."
+  (let [ell 2 m 0 th 0.67
+        r1 [{:L-alpha 0 :L-beta 2 :I (complex-cartesian 1.1 -0.2) :sigma-alpha 0.1 :sigma-beta -0.05}]
+        r2 [{:L-alpha 2 :L-beta 2 :I 0.4 :sigma-alpha 0.0 :sigma-beta 0.2}
+            {:L-alpha 4 :L-beta 2 :I -0.15 :sigma-alpha 0.03 :sigma-beta 0.07}]
+        sumd (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m th (concat r1 r2))
+        piece (add (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m th r1)
+                   (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m th r2))]
+    (is (< (max-abs-diff-complex sumd piece) 1e-9))))
+
+(deftest austern-eq-5-6-beta-sum-with-coulomb-sigma-rows-test
+  "Rows from `austern-radial-rows-with-coulomb-sigma` agree with the naive reference using the same σ fields."
+  (let [tol 1e-9
+        eta-a 0.09 eta-b 0.14
+        base [{:L-alpha 0 :L-beta 1 :I (complex-cartesian 0.6 0.1)}
+              {:L-alpha 2 :L-beta 1 :I -0.25}]
+        rows (t/austern-radial-rows-with-coulomb-sigma base eta-a eta-b)
+        ell 1 m 0 th 0.73]
+    (doseq [row rows]
+      (is (contains? row :sigma-alpha))
+      (is (contains? row :sigma-beta)))
+    (let [code (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m th rows)
+          ref (beta-sum-eq-5-6-reference-naive ell m th rows)]
+      (is (< (max-abs-diff-complex code ref) tol)))))
+
+(deftest austern-eq-5-6-beta-sum-with-coulomb-plus-nuclear-sigma-rows-test
+  "`austern-radial-rows-with-sigma` (Coulomb + nuclear δ) matches the naive reference on the filled rows."
+  (let [tol 1e-9
+        eta-a 0.11 eta-b 0.19
+        dα {0 0.04 2 0.01}
+        dβ {1 -0.02}
+        base [{:L-alpha 0 :L-beta 1 :I 1.0}
+              {:L-alpha 2 :L-beta 1 :I (complex-cartesian 0.3 -0.2)}]
+        rows (t/austern-radial-rows-with-sigma base eta-a eta-b dα dβ)
+        ell 1 m -1 th 1.15]
+    (let [code (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m th rows)
+          ref (beta-sum-eq-5-6-reference-naive ell m th rows)]
+      (is (< (max-abs-diff-complex code ref) tol)))))
 
 (deftest austern-radial-I-zr-to-beta-sum-eq-5-6-e2e-test
   "End-to-end: I from (5.5) ZR `austern-radial-integral-I-zr-eq-5-5-from-u` into (5.6).

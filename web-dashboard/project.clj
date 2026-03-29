@@ -16,8 +16,9 @@
   :plugins [[lein-cljsbuild "1.1.8"]]
   :main dwba-web.simple-core
   :target-path "target/%s"
-  :profiles {:uberjar {:aot :all}
-             :dev {:source-paths ["src" "../src"]}}
+  ;; Parent `nexus-nrs` sources: transfer benchmark namespaces (e.g. `dwba.benchmark.o16-dp-handbook`).
+  :source-paths ["src" "../src"]
+  :profiles {:uberjar {:aot :all}}
   :resource-paths ["resources" "public"]
   :jvm-opts ["-Xmx2g"]
   ;; ClojureScript output goes to dashboard.js so it does not overwrite the hand-written app.js
