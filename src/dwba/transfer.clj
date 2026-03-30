@@ -2,7 +2,22 @@
   "DWBA calculations for single nucleon transfer reactions.
    
    This namespace implements bound state wavefunctions, transfer form factors,
-   and cross-section calculations for reactions like (d,p), (p,d), etc."
+   and cross-section calculations for reactions like (d,p), (p,d), etc.
+
+   **Coulomb vs nuclear S (do not regress):** Elastic partial-wave **S_L^n** for the Woods–Saxon +
+   R-matrix match lives only in **`functions/s-matrix`** — same quotient as **`functions/s-matrix0`**, with
+   **`Hankel±`** when **η ≠ 0**. **Do not** define **S^n** by dividing some **“full”** amplitude by **e^{2iσ}**
+   (that was a bad **M_L** convention). Coulomb **σ_L** for **(3.1.88)** belongs in **`functions/partial-wave-exp2sigma-Sn-minus-one`**
+   / **`e^{2iσ}(S^n−1)`** only. Here, **`distorted-wave-optical`** **`:coulomb-tail`** only scales **|u|** to **|H_L^+|**;
+   **`nuclear-phase-shifts-map`** uses **`functions/phase-shift`** (**½ arg(S^n)**). Austern **(5.6)** rows use
+   **`coulomb-sigma-L`** + that **δ** map separately — keep those roles split.
+
+   **DWBA distorted waves vs elastic:** Each partial wave **χ_L** here is the **same kind** of continuum solution as in
+   elastic scattering: integrate with **U = V_C + V_opt(± iW)**, then **match** the interior to **Coulomb–Hankel**
+   asymptotics via the **R-matrix** (log-derivative) at the matching radius — the elastic **`functions/s-matrix`**
+   path exposes that match as **S_L^n** explicitly; **`distorted-wave-optical`** instead produces **χ(r)** on a grid
+   and may align **|u|** to **|H_L^+|** at the outer edge (**`:coulomb-tail`**). Same matching idea; DWBA post
+   form factors consume **χ** directly."
   (:require [fastmath.core :as m]
             [fastmath.special :as spec]
             [fastmath.polynomials :as poly]
@@ -1112,6 +1127,15 @@
                  (get Ri i)))
           (range n))))
 
+(defn handbook-F-lsj-radial-from-neutron-bound-u
+  "**F_{ℓsj}(r_i) = R_n(r_i)** for the **transferred nucleon**: **R = u/r** from **`radial-R-from-reduced-u`** on the
+  **normalized** reduced bound **u** (**`normalize-bound-state`** ⇒ **∫|u|² dr = 1 = ∫|R|² r² dr**, §5.4 style).
+
+  **Not** multiplied by the residual cluster radial factor (deuteron **R_d**); that physics is folded into **D₀** in
+  the handbook-style DWBA."
+  [neutron-u-reduced ^double h]
+  (radial-R-from-reduced-u neutron-u-reduced h))
+
 (defn- transfer-radial-R-at-r-linear
   "Linear interpolation of radial factor **R(r)** on uniform grid **r = i·h**.
   **R-vec** entries are real or complex. **r** is clamped to **[0, (n−1)h]**."
@@ -1357,16 +1381,18 @@
    Parameters:
    - chi-i, chi-f, phi-i, phi-f: **Reduced** radial functions u(r)=r·R(r) on grid r=i·h, as
      produced by `distorted-wave-optical`, `solve-bound-state-numerov` + `normalize-bound-state`.
-     **φ_i**, **φ_f** are **bound** states (**negative** eigenenergy in the radial Schrödinger problem);
-     the radial **F_{ℓsj}(r)** factor is **`F-lsj-r-from-bound-reduced-u`** (**R_{φ_f}^* R_{φ_i}**).
-     **`transfer-amplitude-post`** uses that vector inside the ZR POST integrand (with **χ**, **D₀**, **r²**).
+     **φ_i**, **φ_f** are **bound** states (**negative** eigenenergy). The ZR integrand uses **handbook**
+     single-particle **F_{ℓsj}(r)=R_n(r)=u_n/r** (**`handbook-F-lsj-radial-from-neutron-bound-u`**), i.e.
+     **∫|R_n|² r² dr = 1** when **u_n** is **`normalize-bound-state`** — not Austern’s **R_{φ_f}^* R_{φ_i}**
+     product (**`F-lsj-r-from-bound-reduced-u`**, kept for low-level benchmarks only).
    - r-max: Maximum radius (fm)
    - h: Step size (fm)
    - interaction-type: :zero-range or :finite-range
    - interaction-params: Parameters for interaction
      - For zero-range: {:D0 value} or just D0 value
      - For finite-range: {:V0 value, :form-factor :yukawa/:gaussian, :range-param value}
-   - opts (optional): map with **`:zr-chi-exit-mass-ratio`** — used for **:zero-range** only
+   - opts (optional): **`:zr-chi-exit-mass-ratio`** for **:zero-range**; **`:handbook-F-from`** **`:phi-i`**
+     (default, e.g. nucleus nucleon in **(p,d)**) or **`:phi-f`** (e.g. captured nucleon in **(d,p)**).
    
    Returns: Transfer amplitude T_post
    
@@ -1380,7 +1406,13 @@
         ratio-1? (< (Math/abs (- ratio 1.0)) 1e-14)
         chi-i-R (radial-R-from-reduced-u chi-i h)
         chi-f-R (radial-R-from-reduced-u chi-f h)
-        F-lsj (F-lsj-r-from-bound-reduced-u phi-i phi-f h)
+        nucleon-u (case (or (:handbook-F-from opts) :phi-i)
+                     :phi-i phi-i
+                     :phi-f phi-f
+                     (throw (IllegalArgumentException.
+                             (format "transfer-amplitude-post: :handbook-F-from must be :phi-i or :phi-f, got %s"
+                                     (pr-str (:handbook-F-from opts))))))
+        F-lsj (handbook-F-lsj-radial-from-neutron-bound-u nucleon-u h)
         n (min (count chi-i-R) (count chi-f-R) (count F-lsj))
         integrand (mapv (fn [i]
                          (let [r (* i h)
@@ -1411,7 +1443,7 @@
                                             (throw (IllegalArgumentException. 
                                                     (format "Unknown interaction type: %s" interaction-type))))
                                r-squared (* r r)]
-                           ;; Use complex multiplication: χ*_f · V · φ*_f · φ_i · χ_i · r²
+                           ;; Use complex multiplication: χ*_f · V · F_{ℓsj} · χ_i · r² (**F** = handbook **R_n**)
                            ;; Convert real numbers to complex for safe multiplication
                            (let [V-complex (if (number? V-transfer)
                                            (complex-cartesian V-transfer 0.0)
@@ -2392,6 +2424,11 @@
   [M-A M-B]
   (/ (double M-A) (double M-B)))
 
+(defn handbook-zr-chi-exit-mass-ratio
+  "Same as **`austern-zr-chi-exit-mass-ratio`** — **M_A/M_B** for ZR **χ_β** radius scaling in handbook DWBA."
+  [M-A M-B]
+  (austern-zr-chi-exit-mass-ratio M-A M-B))
+
 (defn- austern-real-scalar
   ^double [x]
   (if (number? x) (double x) (double (re x))))
@@ -2474,7 +2511,7 @@
   and then this function. If your optical code defines **f** differently (e.g. **u/(kr)**), fold that
   into **integrand-real-vec** before calling here.
 
-  **Returns:** real **I** for use in `austern-reduced-amplitude-beta-sum-eq-5-6`."
+  **Returns:** real **I** for **`austern-reduced-amplitude-beta-sum-eq-5-6`** (Austern **(5.5)** prefactor). Handbook §5.5.2 **I** on the same integrand: **`handbook-radial-integral-I-zr`** + **`handbook-zr-multipole-amplitude-sum`**."
   [integrand-real-vec h M-A M-B k-alpha k-beta]
   {:pre [(sequential? integrand-real-vec)
          (every? number? [h M-A M-B k-alpha k-beta])
@@ -2527,36 +2564,39 @@
       F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio)))
 
 ;; -----------------------------------------------------------------------------
-;; **Handbook** ZR radial integral (*Handbook of direct nuclear reaction for retarded theorist*):
-;; **F_{ℓsj}(r)** = normalized bound **nucleon** radial **R(r)=u/r**; prefactor **√(4π)(M_B/M_A)/(k_α k_β)**
-;; on the same **∫ F R_α R_β r² dr** grid as **`austern-radial-integrand-zr-F-Ra-Rb-r2`**
-;; (consistent with **`f-alphaL` / `f-betaL`** = **R** from reduced **u**).
-;; Angular multipole sum: still **`austern-reduced-amplitude-beta-sum-eq-5-6`** (same **L_β ℓ L_α** geometry).
+;; **Handbook** single-nucleon **F** (§5.4): **F_{ℓsj} = R_n = u/r** on **`austern-radial-integrand-zr-F-Ra-Rb-r2`**.
+;;
+;; **I** for **`handbook-zr-multipole-amplitude-sum`** + **`T = D₀ √(2ℓ+1) β`** + **`transfer-differential-cross-section`**
+;; must use the same **(5.5)** prefactor **(M_B/M_A)(4π/(k_α k_β))** as **`austern-radial-integral-I-zr-eq-5-5-from-u`**
+;; (LNPS / Austern angular reduction is derived for that **I**).  A printed §5.5.2 line often shows **√(4π)(M_B/M_A)/(k_α k_β)** —
+;; that matches a **reduced** amplitude in the book, not this **β → T → dσ/dΩ** chain; using **√(4π)** here undershoots **|T|²** by **4π**.
+;;
+;; **Display only:** **`handbook-radial-integral-prefactor-handbook-display-zr`** (ratio **√(4π)/(4π)** to **(5.5)**).
 ;; -----------------------------------------------------------------------------
 
-(defn handbook-F-lsj-radial-from-neutron-bound-u
-  "**F_{ℓsj}(r_i) = R_n(r_i)** for the **transferred nucleon**: **R = u/r** from **`radial-R-from-reduced-u`** on the
-  **normalized** reduced bound **u** (**`normalize-bound-state`** ⇒ **∫|u|² dr = 1 = ∫|R|² r² dr**, §5.4 style).
+(defn handbook-radial-integral-prefactor-handbook-display-zr
+  "Handbook §5.5.2 **printed** factor **√(4π)\\,(M_B/M_A)/(k_α k_β)** — for comparison to tables only.
 
-  **Not** multiplied by the residual cluster radial factor (deuteron **R_d**); that physics is folded into **D₀** in
-  the handbook-style DWBA."
-  [neutron-u-reduced ^double h]
-  (radial-R-from-reduced-u neutron-u-reduced h))
+  **Do not** use for **`handbook-radial-integral-I-zr`**; that fn uses **(5.5)** **`austern-radial-integral-prefactor-eq-5-5`** so **dσ/dΩ** matches the **β** multipole sum.
 
-(defn handbook-radial-integral-prefactor-zr
-  "ZR prefactor **√(4π)\\,(M_B/M_A)/(k_α k_β)** from handbook §5.5.2 (**fm⁻¹** wavenumbers, **M** as in **`ca40-pd-kinematics`**)."
+  Ratio **display / (5.5)** = **√(4π)/(4π)**."
   ^double [^double M-A ^double M-B ^double k-alpha ^double k-beta]
   (* (Math/sqrt (* 4.0 Math/PI)) (/ M-B M-A) (/ 1.0 (* k-alpha k-beta))))
 
+(defn handbook-radial-integral-prefactor-zr
+  "Deprecated alias for **`handbook-radial-integral-prefactor-handbook-display-zr`** (§5.5.2 display)."
+  ^double [^double M-A ^double M-B ^double k-alpha ^double k-beta]
+  (handbook-radial-integral-prefactor-handbook-display-zr M-A M-B k-alpha k-beta))
+
 (defn handbook-radial-integral-I-zr
-  "Handbook radial integral **I^{\\rm hb}_{L_β L_α}** = **`handbook-radial-integral-prefactor-zr`** × Simpson
-  **`austern-radial-integrand-zr-F-Ra-Rb-r2`** on **F** (e.g. **`handbook-F-lsj-radial-from-neutron-bound-u`**),
-  same **χ_α, χ_β** partial waves as **`austern-radial-integral-I-zr-eq-5-5-from-u`**."
+  "ZR radial **I_{L_β L_α}** with handbook **F = R_n** and **N. Austern (5.5)** prefactor **(M_B/M_A)(4π/(k_α k_β))** × Simpson on **`austern-radial-integrand-zr-F-Ra-Rb-r2`**.
+
+  Equals **`austern-radial-integral-I-zr-eq-5-5-from-u`** for the same **F**-vector (only **F** construction differs: **R_n** vs overlaps). Use with **`handbook-zr-multipole-amplitude-sum`**."
   [F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
   (let [h* (double h)
         integrand (austern-radial-integrand-zr-F-Ra-Rb-r2
                    F-vec u-alpha u-beta h* (double zr-mass-ratio))]
-    (* (handbook-radial-integral-prefactor-zr (double M-A) (double M-B)
+    (* (austern-radial-integral-prefactor-eq-5-5 (double M-A) (double M-B)
          (double k-alpha) (double k-beta))
        (austern-radial-simpson-integrate-real h* integrand))))
 
@@ -2581,16 +2621,14 @@
 
   **Zero-range (Eq. (5.3)):** the same left-hand side equals **∫ d³ r χ_β^*((M_A/M_B)\\mathbf r)
   F_{\\ell sj}(r) Y_{\\ell}^{m*}(\\hat r) χ_α(\\mathbf r)** (Austern’s notation). The **bound** radial
-  content in **F_{ℓsj}** comes from single-particle wavefunctions that solve the **Schrödinger equation at
-  negative energy** (bound states in the optical / shell well). In this codebase, **φ_i** and **φ_f** in
-  `transfer-amplitude-post` are those solutions (**`solve-bound-state-numerov`** at **E < 0**, then
-  **`normalize-bound-state`**), carried as reduced **u = rR** and converted to **R** inside the overlap;
-  angular **Y_{ℓm}** and full **f_{ℓsj,m}** structure are not expanded explicitly in that shortcut — only
-  the chosen partial wave and overlap enter through the bound **R_φ** factors and **D₀**.
+  content in **F_{ℓsj}** is the **handbook** single-particle **R_n = u_n/r** (**`handbook-F-lsj-radial-from-neutron-bound-u`**):
+  **`transfer-amplitude-post`** picks **u_n** from **`:handbook-F-from`** **`:phi-i`** (default) or **`:phi-f`**.
+  Angular **Y_{ℓm}** and full **f_{ℓsj,m}** are not expanded in that shortcut — partial wave and **D₀**
+  carry the rest. ( **`F-lsj-r-from-bound-reduced-u`** keeps Austern’s **R_{φ_f}^* R_{φ_i}** for benchmarks.)
 
-  **Partial-wave / angle (5.6):** after radial integrals **I_{L_β L_α}** **(5.5)** are known,
-  **`austern-reduced-amplitude-beta-sum-eq-5-6`** evaluates **(5.6)** in the standard coplanar
-  frame (**ẑ ‖ k_α**). Each **(L_α, L_β)** term carries **Y_{L_β}^{-m}(Θ, 0)** (Austern’s **Θ** between
+  **Partial-wave / angle:** after ZR radial integrals **I_{L_β L_α}** are known,
+  **`austern-reduced-amplitude-beta-sum-eq-5-6`** (Austern **(5.6)**) or **`handbook-zr-multipole-amplitude-sum`**
+  (same sum; use with **`handbook-radial-integral-I-zr`**) in the coplanar frame (**ẑ ‖ k_α**). Each **(L_α, L_β)** term carries **Y_{L_β}^{-m}(Θ, 0)** (Austern’s **Θ** between
   **k_α** and **k_β**). It is simpler than **(5.4)** (no **M_α**, **M_β** sums) but still requires
   that radial table and consistent **σ_{αL}**, **σ_{βL}**.
 
@@ -2609,6 +2647,16 @@
         denom (mul (complex-cartesian sqrt-2l1 0.0)
                    (transfer-imaginary-unit-to-integer-power (long ell)))]
     (div Ic denom)))
+
+(defn- zr-dwba-cg-product-Lbeta-l-Lalpha
+  "Shared **⟨L_β ℓ;0,0|L_α 0⟩ ⟨L_β ℓ;−m,m|L_α 0⟩** (Edmonds order via **`jam/clebsch-gordan-exact`**)."
+  ^double [L-alpha L-beta ell m]
+  (let [L-a (double L-alpha)
+        L-b (double L-beta)
+        l (double ell)
+        mproj (double m)]
+    (* (double (jam/clebsch-gordan-exact L-b 0.0 l 0.0 L-a 0.0))
+       (double (jam/clebsch-gordan-exact L-b (- mproj) l mproj L-a 0.0)))))
 
 (defn austern-eq-5-6-cg-product-Lbeta-l-Lalpha
   "Clebsch–Gordan **product** from **N. Austern**, **Eq. (5.6)**:
@@ -2629,21 +2677,14 @@
 
   **Returns:** real **double**."
   ^double [L-alpha L-beta ell m]
-  (let [L-a (double L-alpha)
-        L-b (double L-beta)
-        l (double ell)
-        mproj (double m)]
-    (* (double (jam/clebsch-gordan-exact L-b 0.0 l 0.0 L-a 0.0))
-       (double (jam/clebsch-gordan-exact L-b (- mproj) l mproj L-a 0.0)))))
+  (zr-dwba-cg-product-Lbeta-l-Lalpha L-alpha L-beta ell m))
 
-(defn austern-eq-5-6-admissible-L-beta-values
-  "**L_β** that can contribute to **Austern (5.6)** for fixed entrance partial wave **L_α** and transferred orbital **ℓ**.
+(defn handbook-zr-cg-product-Lbeta-l-Lalpha
+  "Same CG product as **`austern-eq-5-6-cg-product-Lbeta-l-Lalpha`** — ZR DWBA coplanar multipole geometry."
+  ^double [L-alpha L-beta ell m]
+  (zr-dwba-cg-product-Lbeta-l-Lalpha L-alpha L-beta ell m))
 
-  The book writes **∑_{L_α,L_β}**, but **L⃗_α = L⃗_β + ℓ⃗** in angular-momentum coupling fixes **L_β** once **L_α**, **ℓ** are chosen: triangle
-  **|L_α − ℓ| ≤ L_β ≤ L_α + ℓ** (with **L_β ≥ 0**) and **L_α + L_β + ℓ** even so **⟨L_β ℓ; 0,0 | L_α 0⟩** need not vanish.
-  The second **CG** in **(5.6)** uses projections **(−m, m)** on the **ℓ** leg but does not enlarge this **L_β** span for integer **L**.
-
-  **L-max** — keep **L_β ≤ L-max**. Returns a seq of long **L_β** (possibly empty)."
+(defn- zr-dwba-admissible-L-beta-values
   [^long L-alpha ^long ell ^long L-max]
   (let [la L-alpha
         l ell
@@ -2654,15 +2695,34 @@
       (filter (fn [^long lb] (even? (+ la lb l)))
               (range lb-min (inc lb-max))))))
 
+(defn austern-eq-5-6-admissible-L-beta-values
+  "**L_β** that can contribute to **Austern (5.6)** for fixed entrance partial wave **L_α** and transferred orbital **ℓ**.
+
+  The book writes **∑_{L_α,L_β}**, but **L⃗_α = L⃗_β + ℓ⃗** in angular-momentum coupling fixes **L_β** once **L_α**, **ℓ** are chosen: triangle
+  **|L_α − ℓ| ≤ L_β ≤ L_α + ℓ** (with **L_β ≥ 0**) and **L_α + L_β + ℓ** even so **⟨L_β ℓ; 0,0 | L_α 0⟩** need not vanish.
+  The second **CG** in **(5.6)** uses projections **(−m, m)** on the **ℓ** leg but does not enlarge this **L_β** span for integer **L**.
+
+  **L-max** — keep **L_β ≤ L-max**. Returns a seq of long **L_β** (possibly empty)."
+  [^long L-alpha ^long ell ^long L-max]
+  (zr-dwba-admissible-L-beta-values L-alpha ell L-max))
+
+(defn handbook-zr-partial-wave-L-beta-values
+  "Handbook / standard ZR DWBA: admissible **L_β** for fixed **L_α**, transferred **ℓ**, cap **L_max** (triangle + parity)."
+  [^long L-alpha ^long ell ^long L-max]
+  (zr-dwba-admissible-L-beta-values L-alpha ell L-max))
+
 (defn nuclear-phase-shifts-map
-  "Partial-wave **nuclear** phase shifts **δ_L** (**radians**) for **L = 0 … L-max**, from **`phase-shift`**.
+  "Partial-wave **nuclear** (short-range) phase shifts **δ^n_L** (**radians**) for **L = 0 … L-max**
+  (**S_L^n = e^{2iδ^n_L}** in T&N **(3.1.84)**).
 
-  Same **Coulomb + Woods–Saxon** **S-matrix** matching as elastic **`s-matrix`**: **δ_L** is the phase
-  **relative to Coulomb Hankel** asymptotics. Use **σ_L^total = coulomb-sigma-L + δ_L** in **`austern-radial-rows-with-sigma`**.
+  **`functions/phase-shift`** = **½ arg(S_L^n)** with **S_L^n = `s-matrix`** (same as neutral **`phase-shift0`**, no added **σ**).
+  This map is **`{L → δ^n_L}`** = **`phase-shift`** per **L**.
 
-  **e-cm** — CM energy (MeV). **v-params** — **`[V0 R0 a0]`** ( **`s-matrix`** convention).
+  **`austern-radial-rows-with-sigma`** forms **σ_L^total = σ_L^Coulomb + δ^n_L** for **(5.6)**.
 
-  **Returns:** map **`{L → δ_L}`** (long keys)."
+  Bind **`mass-factor`**, **`Z1Z2ee`**, and **`functions/*elastic-imag-ws-params*`** like **`s-matrix`**.
+
+  **Returns:** map **`{L → δ^n_L}`** (long keys)."
   [^double e-cm v-params ^long l-max]
   (into {}
         (map (fn [^long L]
@@ -2707,6 +2767,53 @@
   [radial-rows eta-alpha eta-beta]
   (austern-radial-rows-with-sigma radial-rows eta-alpha eta-beta nil nil))
 
+(defn handbook-zr-rows-with-coulomb-sigma
+  "Attach Coulomb **σ_L(η)** only to **`{:L-alpha :L-beta :I}`** rows (*Handbook* / ZR DWBA partial-wave sums)."
+  [radial-rows eta-alpha eta-beta]
+  (austern-radial-rows-with-sigma radial-rows eta-alpha eta-beta nil nil))
+
+(defn- zr-multipole-amplitude-sum-rows
+  "Coplanar ZR DWBA multipole sum over **`radial-rows`** (**I**, **σ**, **L_α**, **L_β**). Shared by handbook and Austern APIs."
+  [ell m-ell theta-rad radial-rows]
+  {:pre [(every? number? [ell m-ell theta-rad]) (sequential? radial-rows)]}
+  (let [l (double ell)
+        mproj (double m-ell)
+        th (double theta-rad)]
+    (reduce
+     (fn [acc row]
+       (let [L-a (double (:L-alpha row))
+             L-b (double (:L-beta row))
+             Ival (:I row)
+             sa (double (or (:sigma-alpha row) 0.0))
+             sb (double (or (:sigma-beta row) 0.0))
+             cg-prod (zr-dwba-cg-product-Lbeta-l-Lalpha L-a L-b l mproj)
+             La (long (Math/round L-a))
+             Lb (long (Math/round L-b))
+             ll (long (Math/round l))
+             mm (long (Math/round mproj))]
+         (if (< (Math/abs cg-prod) 1e-20)
+           acc
+           (let [pow (Math/floorMod (- La Lb ll) 4)
+                 iphase (transfer-imaginary-unit-to-integer-power pow)
+                 eph (complex-polar (+ sa sb) 1.0)
+                 sqrt2lb (Math/sqrt (inc (* 2.0 L-b)))
+                 ybm (spherical-harmonic Lb (- mm) th 0.0)
+                 Ic (if (number? Ival) (complex-cartesian (double Ival) 0.0) Ival)
+                 pref (complex-cartesian (* sqrt2lb cg-prod) 0.0)
+                 term (mul iphase eph pref Ic ybm)]
+             (add acc term)))))
+     (complex-cartesian 0.0 0.0)
+     radial-rows)))
+
+(defn handbook-zr-multipole-amplitude-sum
+  "ZR DWBA angular weight **∑_{L_α,L_β} …** for coplanar kinematics (handbook multipole reduction).
+
+  **radial-rows** — maps **`{:L-alpha :L-beta :I :sigma-alpha :sigma-beta}`** with **I** from **`handbook-radial-integral-I-zr-from-neutron-bound`** (**(5.5)** prefactor **(M_B/M_A)(4π/(k_α k_β))** on **∫ F R_α R_β r² dr** — not the §5.5.2 **√(4π)** display line). Returns complex **∝ β^{ℓm}(θ)** for **T = D₀ √(2ℓ+1) β** and **`transfer-differential-cross-section`**.
+
+  **Same algebra** as **`austern-reduced-amplitude-beta-sum-eq-5-6`**."
+  [ell m-ell theta-rad radial-rows]
+  (zr-multipole-amplitude-sum-rows ell m-ell theta-rad radial-rows))
+
 (defn austern-reduced-amplitude-beta-sum-eq-5-6
   "Partial-wave form of **β_{sj}^{ℓm}** from **N. Austern**, *Direct Nuclear Reaction Theories*,
   **Eq. (5.6)** — simpler than **(5.4)** because the **z**-axis is along **k_α** and **y** along
@@ -2740,41 +2847,13 @@
   (Coulomb ± nuclear, same convention as the code that produces **f**).
 
   **radial-rows** — collection of maps **`{:L-alpha :L-beta :I :sigma-alpha :sigma-beta}`**:
-  **:I** = **I_{L_β L_α}^{ℓsj}**; **σ** (**radians**). Use **`austern-radial-rows-with-sigma`** (Coulomb + nuclear via **`phase-shift`**) or **`austern-radial-rows-with-coulomb-sigma`** (Coulomb only).
+  **:I** = **I_{L_β L_α}^{ℓsj}** with Austern **(5.5)** prefactor; **σ** (**radians**). Use **`austern-radial-rows-with-sigma`** (Coulomb + nuclear via **`phase-shift`**) or **`austern-radial-rows-with-coulomb-sigma`** (Coulomb only). Handbook §5.5.2 **I**: **`handbook-zr-multipole-amplitude-sum`** (same sum).
 
   **Clebsch–Gordan product:** **`austern-eq-5-6-cg-product-Lbeta-l-Lalpha`**. **Y:** `spherical-harmonic`.
 
   **Returns:** complex **β_{sj}^{ℓm}** (same object as in **(4.59)** — **s**, **j** are implicit in each **I**)."
   [ell m-ell theta-rad radial-rows]
-  {:pre [(every? number? [ell m-ell theta-rad]) (sequential? radial-rows)]}
-  (let [l (double ell)
-        mproj (double m-ell)
-        th (double theta-rad)]
-    (reduce
-     (fn [acc row]
-       (let [L-a (double (:L-alpha row))
-             L-b (double (:L-beta row))
-             Ival (:I row)
-             sa (double (or (:sigma-alpha row) 0.0))
-             sb (double (or (:sigma-beta row) 0.0))
-             cg-prod (austern-eq-5-6-cg-product-Lbeta-l-Lalpha L-a L-b l mproj)
-             La (long (Math/round L-a))
-             Lb (long (Math/round L-b))
-             ll (long (Math/round l))
-             mm (long (Math/round mproj))]
-         (if (< (Math/abs cg-prod) 1e-20)
-           acc
-           (let [pow (Math/floorMod (- La Lb ll) 4)
-                 iphase (transfer-imaginary-unit-to-integer-power pow)
-                 eph (complex-polar (+ sa sb) 1.0)
-                 sqrt2lb (Math/sqrt (inc (* 2.0 L-b)))
-                 ybm (spherical-harmonic Lb (- mm) th 0.0)
-                 Ic (if (number? Ival) (complex-cartesian (double Ival) 0.0) Ival)
-                 pref (complex-cartesian (* sqrt2lb cg-prod) 0.0)
-                 term (mul iphase eph pref Ic ybm)]
-             (add acc term)))))
-     (complex-cartesian 0.0 0.0)
-     radial-rows)))
+  (zr-multipole-amplitude-sum-rows ell m-ell theta-rad radial-rows))
 
 (defn austern-dw-transition-amplitude-T-term-4-59
   "One **(ℓ,s,j)** contribution to the distorted-wave amplitude **T_{αβ}^{DW}** from
@@ -3331,7 +3410,13 @@
 
 (defn distorted-wave-optical
   "Calculate distorted wave using optical potential with complex Numerov.
-   
+
+   **Context (DWBA):** This **χ_L** is the **same physical object** as the elastic distorted wave in that partial
+   wave: solution of the radial equation with **U = V_C + V_opt**, matched at the nuclear surface to **outgoing**
+   Coulomb behavior (**R-matrix / log-derivative** ↔ **Hankel±**), as **`functions/s-matrix`** does for the
+   elastic **S_L^n** quotient. Here you get **χ(r)** on a grid for overlap integrals; optional **`:coulomb-tail`**
+   enforces Coulomb normalization at **r_max** only (see **ns** doc).
+
    Solves the Schrödinger equation with optical potential:
    -∇²/2μ · χ + U(r) · χ = E · χ
    
@@ -3348,9 +3433,10 @@
      - **`:normalize-mode`** — **`:max`** (default): scale χ so **max |χ| = 1** (legacy).
        **`:coulomb-tail`**: scale χ so **|u_last|** matches **|H_L^+(η, ρ)|** at **ρ = k r_max** with
        **u = r χ** reduced wave on the last grid point (same **η**, **k** as **`channel-sommerfeld-eta`** /
-       **`Hankel+`**). Improves **relative** partial-wave weights vs interior **`:max`** norm and tames
-       **θ → π** blow-up in multi-**L** Austern **(5.6)** sums when high **L** radial integrals stay large.
-       Pass **`:tail-eta`** (Sommerfeld **η**) and **`:tail-rho`** (**k r_max**, dimensionless).
+       **`Hankel+`**). This is **magnitude-only** tail matching for **χ** — **not** elastic **S_L^n** and **not**
+       a substitute for **`functions/s-matrix`** (R-matrix / **Hankel** quotient). Improves **relative** partial-wave
+       weights vs interior **`:max`** norm and tames **θ → π** blow-up in multi-**L** Austern **(5.6)** sums when
+       high **L** radial integrals stay large. Pass **`:tail-eta`** (Sommerfeld **η**) and **`:tail-rho`** (**k r_max**, dimensionless).
    
    Returns: Vector of complex distorted wave values χ(r)
    

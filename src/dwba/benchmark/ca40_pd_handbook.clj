@@ -1,16 +1,13 @@
 (ns dwba.benchmark.ca40-pd-handbook
   "⁴⁰Ca(p,d)³⁹Ca g.s. pickup — **handbook** (*Handbook of direct nuclear reaction for retarded theorist*)
-  ZR conventions end-to-end.
+  ZR pipeline only (no separate Austern-named entry points).
 
-  **Radial (§5.4–5.5.2):** **F_{ℓsj}(r) = R_n(r)** = bound **neutron** **u/r** only (**`handbook-F-lsj-radial-from-neutron-bound-u`**);
-  integral **√(4π)(M_B/M_A)/(k_α k_β) ∫ χ_β F χ_α r² dr** (**`handbook-radial-integral-I-zr-from-neutron-bound`**), same **R = u/r** partial waves
-  as **`f-alphaL` / `f-betaL`**.
+  **Radial:** **F_{ℓsj} = R_n = u/r**; **I** from **`handbook-radial-integral-I-zr-from-neutron-bound`** (**(5.5)** **(M_B/M_A)(4π/(k_α k_β))** on **∫ F R_α R_β r² dr**).
 
-  **Angular:** **N. Austern (5.6)** multipole sum (**`austern-reduced-amplitude-beta-sum-eq-5-6`**) + Coulomb **σ_L** on rows — same
-  **L_β + ℓ ↔ L_α** geometry as **`dwba.benchmark.ca40-pd-austern`**, but **I** from the handbook radial block.
+  **Angular:** **`handbook-zr-multipole-amplitude-sum`** + **`handbook-zr-rows-with-coulomb-sigma`** (**σ_L** on rows); **`handbook-zr-partial-wave-L-beta-values`**
+  for **L_β + ℓ ↔ L_α** (same triangle as the Austern benchmark, different public API).
 
-  **Amplitude:** **T_m ≈ D₀ √(2ℓ+1) β_m** and **`transfer-differential-cross-section`** (same practical coupling as the Austern benchmark;
-  **D₀** holds cluster / ZR strength). Spin weights match **`ca40-pd-austern`**."
+  **Amplitude:** **T_m ≈ D₀ √(2ℓ+1) β_m** and **`transfer-differential-cross-section`**. **D₀**: cluster / ZR strength. Spin weights match **`ca40-pd-austern`**."
   (:require [dwba.transfer :as t]
             [functions :as fn :refer [mass-factor-from-mu channel-sommerfeld-eta]]
             [complex :refer [mag mul add complex-cartesian]]))
@@ -83,7 +80,7 @@
 
 (defn- ca40-pd-rows-coulomb-sigma
   [base-rows eta-i eta-f]
-  (t/austern-radial-rows-with-coulomb-sigma base-rows eta-i eta-f))
+  (t/handbook-zr-rows-with-coulomb-sigma base-rows eta-i eta-f))
 
 (defn- ca40-pd-filter-rows-by-L-alpha
   [rows L-alpha-only]
@@ -98,7 +95,7 @@
       :or {r-max 100.0 h 0.05 L-max 20 e-cm-i 18.0 transfer-ell ca40-pd-bound-ell}}]
   (let [{:keys [mass-factor-i mass-factor-f e-cm-f k-i k-f M-target M-residual]}
         (ca40-pd-kinematics e-cm-i)
-        zr (t/austern-zr-chi-exit-mass-ratio M-target M-residual)
+        zr (t/handbook-zr-chi-exit-mass-ratio M-target M-residual)
         ell (long transfer-ell)
         phi-n (t/normalize-bound-state
                (t/solve-bound-state-numerov -8.364 3 58.4538 4.0355 0.7 0.048 h r-max) h)
@@ -125,7 +122,7 @@
                                      :tail-eta eta-f :tail-rho rho-f)))]
     (vec
      (for [La (range 0 (inc (long L-max)))
-           Lb (t/austern-eq-5-6-admissible-L-beta-values La ell (long L-max))
+           Lb (t/handbook-zr-partial-wave-L-beta-values La ell (long L-max))
            :let [Ireal (t/handbook-radial-integral-I-zr-from-neutron-bound
                         phi-n (chi-alpha! La) (chi-beta! Lb) h
                         M-target M-residual k-i k-f zr)]
@@ -140,7 +137,7 @@
         ms (range (- ell) (inc ell))]
     (if coherent-m-beta?
       (let [sum-b (reduce (fn [acc ^long m-ell]
-                            (add acc (mul pref (t/austern-reduced-amplitude-beta-sum-eq-5-6
+                            (add acc (mul pref (t/handbook-zr-multipole-amplitude-sum
                                                   ell m-ell theta-rad radial-rows-sigma))))
                           (complex-cartesian 0.0 0.0)
                           ms)
@@ -149,7 +146,7 @@
       (double
        (reduce
         (fn [^double acc ^long m-ell]
-          (let [beta (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m-ell theta-rad radial-rows-sigma)
+          (let [beta (t/handbook-zr-multipole-amplitude-sum ell m-ell theta-rad radial-rows-sigma)
                 Tm (mul pref beta)
                 Tmag (mag Tm)]
             (+ acc (* Tmag Tmag))))
@@ -157,7 +154,7 @@
         ms)))))
 
 (defn ca40-pd-dsigma-handbook-mb-sr
-  "**dσ/dΩ (mb/sr)** — handbook **F_n** radial integral + Austern **(5.6)** + **`transfer-differential-cross-section`**."
+  "**dσ/dΩ (mb/sr)** — handbook **F_n**, **(5.5)** radial **I**, **`handbook-zr-multipole-amplitude-sum`**, **`transfer-differential-cross-section`**."
   [theta-deg & {:keys [e-cm-i r-max h L-max S-factor radial-rows-sigma
                        coherent-m-beta? cm-asymmetry-kappa L-alpha-only]
                 :or {e-cm-i 18.0 r-max 100.0 h 0.05 L-max 20 S-factor 1.0

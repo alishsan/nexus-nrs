@@ -13,7 +13,16 @@
    - Reduced matrix elements and B(Eλ) values
    
    This namespace implements the DWBA formalism for inelastic scattering.
-   See INELASTIC_SCATTERING_PLAN.md for the detailed implementation plan."
+   See INELASTIC_SCATTERING_PLAN.md for the detailed implementation plan.
+
+   **DWBA χ vs elastic:** Entrance/exit **χ** are built with **`dwba.transfer/distorted-wave-optical`** — the same
+   partial-wave continuum as elastic scattering (**R-matrix** match of the integrated solution to **Coulomb–Hankel**
+   outside), not a different Ansatz; elastic **`functions/s-matrix`** is the explicit **S_L^n** from that match for
+   the WS elastic driver.
+
+   **Elastic / Coulomb S (if you add it here):** Optional **`:coulomb-tail`** adjusts **|u|** at **r_max** only — **not**
+   **S_L^n**. For Coulomb elastic **dσ** / **(3.1.88)** use **`functions/s-matrix`** and
+   **`functions/partial-wave-exp2sigma-Sn-minus-one`** — **never** rebuild **S^n** by peeling **e^{2iσ}** from an ad hoc **M_L**."
   (:require [functions :refer [WS solve-numerov]]
             [fastmath.core :as m]
             [fastmath.polynomials :as poly]

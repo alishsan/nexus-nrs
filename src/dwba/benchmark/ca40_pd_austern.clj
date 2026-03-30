@@ -1,5 +1,7 @@
 (ns dwba.benchmark.ca40-pd-austern
-  "⁴⁰Ca(p,d)³⁹Ca g.s. pickup — **dσ/dΩ** from **N. Austern** radial **(5.5)**, angular **(5.6)**, amplitude **T_m ≈ D₀√(2ℓ+1) β_m**
+  "⁴⁰Ca(p,d)³⁹Ca g.s. pickup — **dσ/dΩ** from **handbook** single-nucleon **F_{ℓsj}=R_n** with **N. Austern (5.5)** radial **I**
+  (**`austern-radial-integral-I-zr-eq-5-5-from-u`** on **`handbook-F-lsj-radial-from-neutron-bound-u`**), **(5.6)** angular sum,
+  amplitude **T_m ≈ D₀√(2ℓ+1) β_m**
   (**(4.60)** link), and **`transfer-differential-cross-section`**.
 
   Contrasts with **`dwba.benchmark.ca40-dwuck`**, which is **(d,p)** stripping and by default uses the
@@ -9,8 +11,7 @@
   - Entrance **α**: **p + ⁴⁰Ca**; exit **β**: **d + ³⁹Ca**.
   - **Q** (nonrelativistic): **Q = m(⁴⁰Ca)+m(p) − m(³⁹Ca)−m(d)** ⇒ **e-cm-f = e-cm-i + Q**.
   - **ZR** sampling: **`austern-zr-chi-exit-mass-ratio` = M(⁴⁰Ca)/M(³⁹Ca)** in **(5.5)** / **`f-betaL`**.
-  - Bound overlap: pickup **φ_i** = neutron-like **l=3** well in the target; **φ_f** = **l=0** deuteron
-    (**`solve-bound-state-numerov`** parameters aligned with the **(d,p)** benchmark for the shell/deuteron).
+  - Bound **F_{ℓsj}**: **neutron** **u/r** only (**φ_n** in target well); deuteron **φ_d** enters via **D₀**, not **R_d** in **F**.
   - Partial waves in **(5.5)/(5.6):** only **(L_α,L_β)** allowed by coupling **L⃗_β+ℓ⃗→L⃗_α** are built (**`austern-eq-5-6-admissible-L-beta-values`**), not a dense **L_α×L_β** square.
 
   **Angular / spin**
@@ -118,7 +119,8 @@
       (filterv #(= (long (:L-alpha %)) La) rows))))
 
 (defn ca40-pd-radial-I-rows
-  "Build **{:L-alpha :L-beta :I}** from **(5.5)** for **L_α ≤ L-max** and **L_β** coupled to **L_α** by transferred **ℓ**
+  "Build **{:L-alpha :L-beta :I}** from **handbook** **F=R_n** + **Austern (5.5)** ZR **I** (**`austern-radial-integral-I-zr-eq-5-5-from-u`**)
+  for **L_α ≤ L-max** and **L_β** coupled to **L_α** by transferred **ℓ**
   (**`austern-eq-5-6-admissible-L-beta-values`**), i.e. the same pairs retained in **(5.6)**.
 
   **`:transfer-ell`** — bound orbital **ℓ** in **(5.6)** (default **`ca40-pd-bound-ell`**, **3** here).
@@ -134,8 +136,7 @@
         ell (long transfer-ell)
         phi-n (t/normalize-bound-state
                (t/solve-bound-state-numerov -8.364 3 58.4538 4.0355 0.7 0.048 h r-max) h)
-        phi-d (t/normalize-bound-state
-               (t/solve-bound-state-numerov -2.224 0 42.0 3.9 0.65 0.048 h r-max) h)
+        F-handbook (t/handbook-F-lsj-radial-from-neutron-bound-u phi-n h)
         z12 (* 1.44 1.0 20.0)
         eta-i (sommerfeld-eta-channel e-cm-i mass-factor-i z12)
         eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)
@@ -160,8 +161,8 @@
     (vec
      (for [La (range 0 (inc (long L-max)))
            Lb (t/austern-eq-5-6-admissible-L-beta-values La ell (long L-max))
-           :let [Ireal (t/austern-radial-integral-I-eq-5-5-from-F-lsj
-                        phi-n phi-d (chi-alpha! La) (chi-beta! Lb) h
+           :let [Ireal (t/austern-radial-integral-I-zr-eq-5-5-from-u
+                        F-handbook (chi-alpha! La) (chi-beta! Lb) h
                         M-target M-residual k-i k-f zr)]
            :when (> (Math/abs (double Ireal)) 1e-30)]
        {:L-alpha La :L-beta Lb :I Ireal}))))

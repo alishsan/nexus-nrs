@@ -9,8 +9,7 @@
     amplitude (often vanishing if overlaps / coupling go to zero) — it does **not** collapse **(5.6)** to
     **elastic** Rutherford.
 
-  **Elastic** check belongs in **`functions/differential-cross-section`** (partial-wave **S** with Coulomb
-  only), not in the **(5.5)+(5.6)** pickup pipeline."
+  **Elastic** check belongs in **`functions/differential-cross-section`** (partial waves **e^{2iσ}(S_L^n−1)** with **S_L^n = `s-matrix`**), not in the **(5.5)+(5.6)** pickup pipeline."
   (:require [clojure.test :refer :all]
             [complex :as c]
             [dwba.transfer :as t]))

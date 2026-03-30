@@ -90,9 +90,9 @@
           :Q (+ 938.27 11178.0 (- 1876.136) (- 10257.0))
           :Es-i -16.0 :Es-f -2.0 :label "12C(p,d)11C"}})
 
-(defn- transfer-default-handbook-16o-dp
-  "Default **¹⁶O(d,p)¹⁷O** curve: **`dwba.benchmark.o16-dp-handbook`** (ZR §5.4–5.6 + Austern (5.6)),
-  **E_lab(d)=20 MeV**, same angle grid as the legacy default plot."
+(defn- transfer-default-16o-dp
+  "Default **¹⁶O(d,p)¹⁷O** differential cross section (**mb/sr**, CM) at **E_lab(d)=20 MeV** on **¹⁶O** at rest,
+  angle grid **20°…180°** step **20°**. Backend: parent project **¹⁶O(d,p)** ZR stripping benchmark."
   []
   (when-not (find-ns 'dwba.benchmark.o16-dp-handbook)
     (require 'dwba.benchmark.o16-dp-handbook))
@@ -110,7 +110,7 @@
                 :angle theta-deg
                 :differential_cross_section
                 (double (ds-fn theta-deg :e-cm-i e-cm-i :h h :r-max r-max :L-max L-max))}))]
-    {:label "16O(d,p)17O — handbook ZR + Austern (5.6) [o16-dp-handbook]"
+    {:label "16O(d,p)17O — ZR DWBA (mb/sr)"
      :transfer transfer-vec}))
 
 (defn- transfer-default-data
@@ -168,31 +168,45 @@
         {:label label
          :transfer transfer-vec}))))
 
+(def ^:private transfer-implementation-16o-dp
+  "User-facing label for the **¹⁶O(d,p)** benchmark (avoid clojure ns name in dashboard copy)."
+  "16O(d,p) ZR partial-wave")
+
+(declare transfer-target-map-for-default)
+
 (defn- transfer-default-response
   "Ring response for GET /api/transfer-default.
 
-  **Query:** `target` (**16O** | **12C**), `reaction_type` (**p-d** from incident **p**, or **d-p** for **d** on
-  target — **d-p** uses **`o16-dp-handbook`** (only **¹⁶O(d,p)** is implemented; other targets get the same curve with a clarifying label)."
-  [target-key reaction-type-raw]
+  **Query:** `target` (**16O** | **12C** | **generic**), optional **transfer_target_A**, **transfer_target_Z** when generic;
+  **reaction_type** (**p-d** = pickup, or **d-p** = **¹⁶O(d,p)** stripping preset)."
+  [target-key reaction-type-raw extra]
   (let [rt (str/lower-case (str/trim (str reaction-type-raw)))
         d-p? (or (= rt "d-p") (= rt "d_p") (= rt "dp"))
+        tk (str/trim (str target-key))
         {:keys [label transfer]}
         (if d-p?
-          (let [base (transfer-default-handbook-16o-dp)]
-            (if (= target-key "16O")
+          (let [base (transfer-default-16o-dp)]
+            (if (= tk "16O")
               base
-              {:label (str (:label base) " — handbook preset is ¹⁶O(d,p); target was " target-key)
+              {:label (str (:label base) " — preset is ¹⁶O(d,p); target was " tk
+                         (when (= "generic" (str/lower-case tk))
+                           (str " (A=" (long (or (:transfer_target_A extra) 40))
+                                ", Z=" (long (or (:transfer_target_Z extra) 20)) ")")))
                :transfer (:transfer base)}))
-          (transfer-default-data (get transfer-targets target-key (get transfer-targets "16O"))))]
+          (transfer-default-data (transfer-target-map-for-default tk extra)))]
     (response {:success true
                :target label
                :data {:transfer transfer
                       :parameters {:default (str label " at 20 MeV")
                                    :target label
-                                   :target_key target-key
+                                   :target_key tk
+                                   :transfer_target_A (when (= "generic" (str/lower-case tk))
+                                                        (long (or (:transfer_target_A extra) 40)))
+                                   :transfer_target_Z (when (= "generic" (str/lower-case tk))
+                                                        (long (or (:transfer_target_Z extra) 20)))
                                    :reaction_type (if d-p? "d-p" "p-d")
                                    :implementation (if d-p?
-                                                      "dwba.benchmark.o16-dp-handbook"
+                                                      transfer-implementation-16o-dp
                                                       "transfer-amplitude-post + global optics")}}})))
 
 (defn- serve-resource [resource-name]
@@ -269,6 +283,31 @@
   [v default]
   (let [s (str/trim (str v))]
     (if (str/blank? s) default (Integer/parseInt s))))
+
+(defn- generic-transfer-target
+  "Rough **(p,d)** pickup kinematics for target **(A,Z)** → residual **(A−1,Z)**. Masses **A×931.494** MeV/c²;
+  **Q** from two-body energy balance; **Es-i / Es-f** placeholders for the bound-state solver (tune later)."
+  [A-raw Z-raw]
+  (let [A (long (max 2 (parse-int-default A-raw 40)))
+        Z (long (max 0 (min (long (parse-int-default Z-raw 20)) A)))
+        ra (dec A)
+        m-p 938.27
+        m-d 1876.136
+        amu 931.494
+        m-t (* (double A) amu)
+        m-r (* (double ra) amu)]
+    {:A A :Z Z :residual-A ra :m-target m-t :m-residual m-r
+     :Q (+ m-p m-t (- m-d) (- m-r))
+     :Es-i -10.0 :Es-f -2.0
+     :label (str "Generic " A "(Z=" Z ")(p,d)" ra "(approx. Q, bound states)")}))
+
+(defn- transfer-target-map-for-default
+  "Map used by **transfer-default-data**: preset key **16O** / **12C**, or **generic** from **extra** **:transfer_target_A** / **:transfer_target_Z**."
+  [target-key extra]
+  (let [k (str/trim (str target-key))]
+    (if (= "generic" (str/lower-case k))
+      (generic-transfer-target (:transfer_target_A extra) (:transfer_target_Z extra))
+      (or (get transfer-targets k) (get transfer-targets "16O")))))
 
 (defn- ws-params-from [params]
   [(parse-double-default (:V0 params) 40.0)
@@ -516,8 +555,8 @@
                                                                                   :projectile projectile-str :inelastic_target target-str}}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
-(defn- transfer-data-handbook-16o-dp
-  "Cross table **{:energy :angle :differential_cross_section}** for **handbook** ¹⁶O(d,p) at each lab **E(d)**."
+(defn- transfer-data-16o-dp
+  "Cross table **{:energy :angle :differential_cross_section}** for **¹⁶O(d,p)** at each lab **E(d)** (MeV)."
   [energies angles-deg h r-max L-max S-factor]
   (when-not (find-ns 'dwba.benchmark.o16-dp-handbook)
     (require 'dwba.benchmark.o16-dp-handbook))
@@ -540,8 +579,8 @@
           target-str (str/trim (str (or (:target p) "16O")))
           rt-str (str/trim (str (or (:reaction_type p) "p-d")))
           reaction-type (keyword (str/replace rt-str #"_" "-"))
-          handbook-d-p? (= reaction-type :d-p)]
-      (if handbook-d-p?
+          strip-d-p? (= reaction-type :d-p)]
+      (if strip-d-p?
         (let [energy-list (or (transfer-energies-from p) (parse-doubles (:energies p)))
               [energies L-values] (ensure-energies-L energy-list (parse-ints (:L_values p)))
               ws (transfer-ws-from p)
@@ -551,10 +590,10 @@
               r-max (parse-double-default (:transfer_r_max p) 20.0)
               L-max (parse-int-default (:transfer_L_max p) 6)
               angles-deg (range 20.0 181.0 20.0)
-              transfer-data (transfer-data-handbook-16o-dp energies angles-deg h r-max L-max S-factor)
+              transfer-data (transfer-data-16o-dp energies angles-deg h r-max L-max S-factor)
               note (if (= target-str "16O")
                      "Bound state and global OM fixed in benchmark; S_factor scales σ."
-                     (str "¹⁶O(d,p) handbook benchmark; request target was " target-str ". S_factor scales σ.; optics recorded for reference only."))]
+                     (str "¹⁶O(d,p) stripping preset; request target was " target-str ". S_factor scales σ.; optics recorded for reference only."))]
           (response {:success true :data {:transfer transfer-data
                                           :parameters {:energies energies :L_values L-values
                                                        :ws_params ws :bound_state_ws ws
@@ -562,7 +601,7 @@
                                                        :S_factor S-factor
                                                        :target target-str
                                                        :r_max r-max :h h :L_max L-max
-                                                       :implementation "dwba.benchmark.o16-dp-handbook"
+                                                       :implementation transfer-implementation-16o-dp
                                                        :note note
                                                        :optical_imaginary optical}}}))
         (do
@@ -619,9 +658,16 @@
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
 (defn- handle-transfer-default [req]
-  (try (transfer-default-response (str (or (query-param req "target") "16O"))
-                                  (str (or (query-param req "reaction_type") "p-d")))
-       (catch Exception e (response {:success false :error (.getMessage e)}))))
+  (try
+    (let [ta (some-> (query-param req "transfer_target_A") safe-parse-int)
+          tz (some-> (query-param req "transfer_target_Z") safe-parse-int)
+          extra (cond-> {}
+                  ta (assoc :transfer_target_A ta)
+                  tz (assoc :transfer_target_Z tz))]
+      (transfer-default-response (str (or (query-param req "target") "16O"))
+                                 (str (or (query-param req "reaction_type") "p-d"))
+                                 extra))
+    (catch Exception e (response {:success false :error (.getMessage e)}))))
 
 ;; ---------------------------
 ;; Routes: build flat list and apply (avoids deep nesting / delimiter errors)
@@ -656,7 +702,7 @@
     (OPTIONS "/api/transfer" [] (response nil))
     (OPTIONS "/api/transfer-default" [] (response nil))
     (GET "/api/calculate" [] (assoc (response "Use POST to submit calculation") :status 405))
-    (GET "/api/transfer" [] (assoc (response "Use POST for transfer calculation, GET /api/transfer-default?target=16O&reaction_type=d-p for handbook (d,p) default") :status 405))
+    (GET "/api/transfer" [] (assoc (response "Use POST for transfer calculation, GET /api/transfer-default?target=16O&reaction_type=d-p for 16O(d,p) default curve") :status 405))
     (route/files "/" {:root "public"})
     (route/not-found "Not Found")))
 

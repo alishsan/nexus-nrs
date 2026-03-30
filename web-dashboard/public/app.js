@@ -1,4 +1,17 @@
 // DWBA Web Dashboard JavaScript
+
+/** Plotly: smooth curves between samples (cubic spline). `smoothing` in [0, 1.3]; moderate value limits overshoot on oscillatory DCS. */
+const PLOTLY_SPLINE_LINE = { shape: 'spline', smoothing: 0.65 };
+
+/** Sort scatter points by x so spline and line traces are well-behaved. */
+function sortTraceByX(trace) {
+    if (!trace || !trace.x || !trace.y || trace.x.length !== trace.y.length) return;
+    const pairs = trace.x.map((x, i) => [Number(x), trace.y[i]]);
+    pairs.sort((a, b) => a[0] - b[0]);
+    trace.x = pairs.map(p => p[0]);
+    trace.y = pairs.map(p => p[1]);
+}
+
 class DWBADashboard {
     constructor() {
         // Use same-origin for API when served over http/https (e.g. Railway); use localhost only when opened from file://
@@ -10,13 +23,13 @@ class DWBADashboard {
         this.initializeEventListeners();
         this.loadDefaultParameters();
         this.checkApiHealth();
-        this.loadTransferDefault();  // default DCS on Transfer tab (handbook for 16O+d,p)
+        this.loadTransferDefault();  // default DCS on Transfer tab (16O d-p preset when selected)
         if (this.apiBase === dashboardUrl) {
             this.showApiNotice(dashboardUrl);
         }
     }
 
-    /** Load default DCS for the Transfer tab (`/api/transfer-default`): 16O+d,p → handbook o16-dp-handbook. */
+    /** Load default DCS for the Transfer tab (`/api/transfer-default`). */
     async loadTransferDefault() {
         const targetEl = document.getElementById('transfer_target');
         const target = targetEl ? targetEl.value : '16O';
@@ -24,6 +37,12 @@ class DWBADashboard {
         const reactionType = rtEl ? rtEl.value : 'p-d';
         const labelEl = document.getElementById('transfer-default-label');
         const q = new URLSearchParams({ target, reaction_type: reactionType });
+        if (target === 'generic') {
+            const aEl = document.getElementById('transfer_target_A');
+            const zEl = document.getElementById('transfer_target_Z');
+            if (aEl && aEl.value !== '') q.set('transfer_target_A', String(parseInt(aEl.value, 10) || 40));
+            if (zEl && zEl.value !== '') q.set('transfer_target_Z', String(parseInt(zEl.value, 10) || 20));
+        }
         try {
             const r = await fetch(`${this.apiBase}/api/transfer-default?${q.toString()}`);
             if (!r.ok) {
@@ -102,9 +121,18 @@ class DWBADashboard {
             if (btn) btn.addEventListener('click', () => this[method]());
         });
 
-        // Target / reaction: reload default plot (16O + d-p uses handbook pipeline)
+        // Target / reaction: reload default plot
         document.getElementById('transfer_target')?.addEventListener('change', () => {
+            this.toggleTransferGenericInputs();
             this.loadTransferDefault();
+        });
+        this.toggleTransferGenericInputs();
+        ['transfer_target_A', 'transfer_target_Z'].forEach(id => {
+            document.getElementById(id)?.addEventListener('change', () => {
+                if ((document.getElementById('transfer_target') || {}).value === 'generic') {
+                    this.loadTransferDefault();
+                }
+            });
         });
         document.getElementById('reaction_type')?.addEventListener('change', () => {
             this.loadTransferDefault();
@@ -183,6 +211,13 @@ class DWBADashboard {
         const rowZ = document.getElementById('elastic-generic-Z-row');
         if (rowA) rowA.style.display = show ? '' : 'none';
         if (rowZ) rowZ.style.display = show ? '' : 'none';
+    }
+
+    toggleTransferGenericInputs() {
+        const targetEl = document.getElementById('transfer_target');
+        const show = targetEl && targetEl.value === 'generic';
+        const row = document.getElementById('transfer-generic-AZ-row');
+        if (row) row.style.display = show ? '' : 'none';
     }
 
     _setButtonLoading(btnId, loading) {
@@ -362,7 +397,9 @@ class DWBADashboard {
             transfer_RW: num('transfer_RW', 2),
             transfer_aW: num('transfer_aW', 0.6),
             transfer_r_max: num('transfer_r_max', 20),
-            transfer_h: num('transfer_h', 0.01)
+            transfer_h: num('transfer_h', 0.01),
+            transfer_target_A: int('transfer_target_A', 40),
+            transfer_target_Z: int('transfer_target_Z', 20)
         };
     }
 
@@ -612,7 +649,7 @@ class DWBADashboard {
                     name: `L = ${L}`,
                     type: 'scatter',
                     mode: 'lines+markers',
-                    line: { width: 3 },
+                    line: { width: 3, ...PLOTLY_SPLINE_LINE },
                     marker: { size: 6 }
                 };
             }
@@ -621,6 +658,7 @@ class DWBADashboard {
         });
 
         const plotData = Object.values(traces);
+        plotData.forEach(sortTraceByX);
         if (plotData.length === 0) {
             console.warn('plotPhaseShifts: no traces after processing');
             return;
@@ -653,8 +691,8 @@ class DWBADashboard {
             const L = point.L;
             if (!traces[L]) {
                 traces[L] = {
-                    nuclear: { x: [], y: [], name: `L = ${L} (Nuclear)`, type: 'scatter', mode: 'lines+markers' },
-                    coulomb_nuclear: { x: [], y: [], name: `L = ${L} (Coul+Nuc)`, type: 'scatter', mode: 'lines+markers', line: { dash: 'dash' } }
+                    nuclear: { x: [], y: [], name: `L = ${L} (Nuclear)`, type: 'scatter', mode: 'lines+markers', line: { ...PLOTLY_SPLINE_LINE } },
+                    coulomb_nuclear: { x: [], y: [], name: `L = ${L} (Coul+Nuc)`, type: 'scatter', mode: 'lines+markers', line: { ...PLOTLY_SPLINE_LINE, dash: 'dash' } }
                 };
             }
             traces[L].nuclear.x.push(point.energy);
@@ -665,6 +703,8 @@ class DWBADashboard {
 
         const plotData = [];
         Object.values(traces).forEach(trace => {
+            sortTraceByX(trace.nuclear);
+            sortTraceByX(trace.coulomb_nuclear);
             plotData.push(trace.nuclear, trace.coulomb_nuclear);
         });
 
@@ -692,7 +732,7 @@ class DWBADashboard {
             name: 'Woods-Saxon',
             type: 'scatter',
             mode: 'lines',
-            line: { color: 'blue', width: 3 }
+            line: { color: 'blue', width: 3, ...PLOTLY_SPLINE_LINE }
         };
 
         const coulomb = {
@@ -701,7 +741,7 @@ class DWBADashboard {
             name: 'Coulomb',
             type: 'scatter',
             mode: 'lines',
-            line: { color: 'red', width: 3 }
+            line: { color: 'red', width: 3, ...PLOTLY_SPLINE_LINE }
         };
 
         const combined = {
@@ -710,7 +750,7 @@ class DWBADashboard {
             name: 'Combined',
             type: 'scatter',
             mode: 'lines',
-            line: { color: 'green', width: 3 }
+            line: { color: 'green', width: 3, ...PLOTLY_SPLINE_LINE }
         };
 
         const layout = {
@@ -737,9 +777,10 @@ class DWBADashboard {
             name: 'Total Cross-Section',
             type: 'scatter',
             mode: 'lines+markers',
-            line: { color: 'purple', width: 3 },
+            line: { color: 'purple', width: 3, ...PLOTLY_SPLINE_LINE },
             marker: { size: 6 }
         };
+        sortTraceByX(trace);
 
         const layout = {
             title: 'Total Cross-Sections vs Energy',
@@ -772,6 +813,7 @@ class DWBADashboard {
                     name: `L = ${L}`,
                     type: 'scatter',
                     mode: 'lines+markers',
+                    line: { ...PLOTLY_SPLINE_LINE },
                     showlegend: true
                 };
             }
@@ -779,41 +821,51 @@ class DWBADashboard {
             phaseTraces[L].y.push(point.phase_shift * 180 / Math.PI);
         });
 
+        Object.values(phaseTraces).forEach(sortTraceByX);
+
+        const dashWoods = {
+            x: potentialData.map(p => p.radius),
+            y: potentialData.map(p => p.woods_saxon),
+            name: 'Woods-Saxon',
+            type: 'scatter',
+            mode: 'lines',
+            line: { ...PLOTLY_SPLINE_LINE },
+            xaxis: 'x2',
+            yaxis: 'y2',
+            showlegend: false
+        };
+        const dashCoul = {
+            x: potentialData.map(p => p.radius),
+            y: potentialData.map(p => p.coulomb),
+            name: 'Coulomb',
+            type: 'scatter',
+            mode: 'lines',
+            line: { ...PLOTLY_SPLINE_LINE },
+            xaxis: 'x2',
+            yaxis: 'y2',
+            showlegend: false
+        };
+        const dashXs = {
+            x: crossSectionData.map(p => p.energy),
+            y: crossSectionData.map(p => p.total_cross_section),
+            name: 'Cross-Section',
+            type: 'scatter',
+            mode: 'lines',
+            line: { ...PLOTLY_SPLINE_LINE },
+            xaxis: 'x3',
+            yaxis: 'y3',
+            showlegend: false
+        };
+        sortTraceByX(dashWoods);
+        sortTraceByX(dashCoul);
+        sortTraceByX(dashXs);
+
         const traces = [
             // Phase shifts
             ...Object.values(phaseTraces),
-            // Potentials
-            {
-                x: potentialData.map(p => p.radius),
-                y: potentialData.map(p => p.woods_saxon),
-                name: 'Woods-Saxon',
-                type: 'scatter',
-                mode: 'lines',
-                xaxis: 'x2',
-                yaxis: 'y2',
-                showlegend: false
-            },
-            {
-                x: potentialData.map(p => p.radius),
-                y: potentialData.map(p => p.coulomb),
-                name: 'Coulomb',
-                type: 'scatter',
-                mode: 'lines',
-                xaxis: 'x2',
-                yaxis: 'y2',
-                showlegend: false
-            },
-            // Cross-sections
-            {
-                x: crossSectionData.map(p => p.energy),
-                y: crossSectionData.map(p => p.total_cross_section),
-                name: 'Cross-Section',
-                type: 'scatter',
-                mode: 'lines',
-                xaxis: 'x3',
-                yaxis: 'y3',
-                showlegend: false
-            }
+            dashWoods,
+            dashCoul,
+            dashXs
         ];
 
         const layout = {
@@ -876,7 +928,7 @@ class DWBADashboard {
                     name: `E = ${E} MeV`,
                     type: 'scatter',
                     mode: 'lines+markers',
-                    line: { width: 2 },
+                    line: { width: 2, ...PLOTLY_SPLINE_LINE },
                     marker: { size: 4 }
                 };
             }
@@ -892,6 +944,7 @@ class DWBADashboard {
         });
 
         const plotData = Object.values(traces);
+        plotData.forEach(sortTraceByX);
         const layout = {
             title: canRatio
                 ? 'Elastic dσ/dΩ / σ_Rutherford'
@@ -930,7 +983,7 @@ class DWBADashboard {
                     name: label,
                     type: 'scatter',
                     mode: 'lines+markers',
-                    line: { width: 3 },
+                    line: { width: 3, ...PLOTLY_SPLINE_LINE },
                     marker: { size: 6 }
                 };
             }
@@ -939,6 +992,7 @@ class DWBADashboard {
         });
 
         const plotData = Object.values(traces);
+        plotData.forEach(sortTraceByX);
         const projEl = document.getElementById('inelastic_projectile');
         const tgtEl = document.getElementById('inelastic_target');
         const projLabels = { p: 'p', n: 'n', d: 'd', a: 'α' };
@@ -976,15 +1030,17 @@ class DWBADashboard {
             const logFloor = 1e-40;
             plotData = energies.map(E => {
                 const pts = data.filter(p => p.energy === E);
-                return {
+                const tr = {
                     x: pts.map(p => p.angle),
                     y: pts.map(p => Math.max(p.differential_cross_section, logFloor)),
                     name: energies.length > 1 ? `E = ${E} MeV` : `${label}, E = ${E} MeV`,
                     type: 'scatter',
                     mode: 'lines+markers',
-                    line: { width: 3 },
+                    line: { width: 3, ...PLOTLY_SPLINE_LINE },
                     marker: { size: 6 }
                 };
+                sortTraceByX(tr);
+                return tr;
             });
         } else {
             const traces = {};
@@ -997,7 +1053,7 @@ class DWBADashboard {
                         name: `L = ${L}`,
                         type: 'scatter',
                         mode: 'lines+markers',
-                        line: { width: 3 },
+                        line: { width: 3, ...PLOTLY_SPLINE_LINE },
                         marker: { size: 6 }
                     };
                 }
@@ -1005,6 +1061,7 @@ class DWBADashboard {
                 traces[L].y.push(point.differential_cross_section);
             });
             plotData = Object.values(traces);
+            plotData.forEach(sortTraceByX);
             xTitle = 'Energy (MeV)';
         }
 

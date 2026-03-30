@@ -14,6 +14,7 @@
 ;; Sister example (stripping): `examples/example_16Odp.clj` — 16O(d,p)17O (**handbook** namespace `o16-dp-handbook`).
 ;; Use (load-file "examples/example_16Opd.clj") or run from project root.
 ;; Own namespace avoids alias conflicts with dwba.core when loaded from REPL.
+;; Plots: **output/16Opd_dcs.png** (linear y), **output/16Opd_dcs_log.png** (log₁₀ y).
 
 (ns examples.example-16Opd
   (:require [dwba.transfer :as t]
@@ -24,7 +25,24 @@
             [complex :as cx :refer [mag re im complex-cartesian add mul]]
             [incanter.core :as i]
             [incanter.charts :as c]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io])
+  (:import [org.jfree.chart.axis LogAxis]))
+
+(defn- clamp-pos-for-log ^double [^double y]
+  (if (or (Double/isNaN y) (Double/isInfinite y) (<= y 0.0))
+    1e-30
+    (max y 1e-30)))
+
+(defn- series-for-log [ys]
+  (mapv clamp-pos-for-log ys))
+
+(defn- chart-set-log-range-y!
+  [chart ^String y-label]
+  (let [plot (.getPlot chart)
+        axis (LogAxis. y-label)]
+    (.setSmallestValue axis 1e-35)
+    (.setRangeAxis plot 0 axis)
+    chart))
 
 (println "=== 16O(p,d) Transfer Reaction Calculation ===")
 (println "")
@@ -309,17 +327,28 @@
   (println "")
   (println "=== Calculation Complete ===")
 
-  ;; Plot DCS vs angle and save to file
+  ;; Plot DCS vs angle and save to file (linear + log y)
   (try
     (let [_ (io/make-parents (io/file "output/16Opd_dcs.png"))
-          chart (c/xy-plot (vec angles-deg) (vec dsigma-mb-sr)
+          th (vec angles-deg)
+          ys (vec dsigma-mb-sr)
+          chart (c/xy-plot th ys
                            :title "16O(p,d)15O — Differential cross section"
                            :x-label "θ (deg)"
                            :y-label "dσ/dΩ (mb/sr)"
                            :series-label (format "E_lab = %.1f MeV" E-lab)
                            :legend true)]
       (i/save chart "output/16Opd_dcs.png" :width 800 :height 500)
-      (println "Plot saved: output/16Opd_dcs.png"))
+      (println "Plot saved: output/16Opd_dcs.png")
+      (let [chart-log (-> (c/xy-plot th (series-for-log ys)
+                                     :title "16O(p,d)15O — Differential cross section (log y)"
+                                     :x-label "θ (deg)"
+                                     :y-label "dσ/dΩ (mb/sr), logarithmic"
+                                     :series-label (format "E_lab = %.1f MeV" E-lab)
+                                     :legend true)
+                         (chart-set-log-range-y! "dσ/dΩ (mb/sr)"))]
+        (i/save chart-log "output/16Opd_dcs_log.png" :width 800 :height 500)
+        (println "Plot saved: output/16Opd_dcs_log.png (log y-axis)")))
     (catch Exception e
       (println (format "Note: Could not save plot (%s). Create output/ directory or check Incanter." (.getMessage e)))))
 

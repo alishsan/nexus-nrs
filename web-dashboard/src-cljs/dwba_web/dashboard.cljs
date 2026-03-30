@@ -7,6 +7,16 @@
 ;; External JavaScript libraries (Plotly) - accessed via js/ namespace
 (def plotly js/Plotly)
 
+(def ^:private plotly-spline-line {:shape "spline" :smoothing 0.65})
+
+(defn- sort-trace-by-x [trace]
+  (let [xs (vec (:x trace))
+        ys (vec (:y trace))]
+    (if (or (not= (count xs) (count ys)) (zero? (count xs)))
+      trace
+      (let [pairs (sort-by first (map vector xs ys))]
+        (assoc trace :x (mapv first pairs) :y (mapv second pairs))))))
+
 ;; Dashboard state
 (defonce dashboard-state (atom {:api-base ""
                                 :current-data nil
@@ -382,10 +392,10 @@
                                          :name (str "L = " L)
                                          :type "scatter"
                                          :mode "lines+markers"
-                                         :line {:width 3}
+                                         :line (merge {:width 3} plotly-spline-line)
                                          :marker {:size 6}})))))
                        {} data)
-        plot-data (clj->js (vals traces))
+        plot-data (clj->js (mapv sort-trace-by-x (vals traces)))
         layout (clj->js {:title "Nuclear Phase Shifts vs Energy"
                          :xaxis {:title "Energy (MeV)" :gridcolor "#e0e0e0"}
                          :yaxis {:title "Phase Shift (degrees)" :gridcolor "#e0e0e0"}
@@ -413,15 +423,19 @@
                                                    :y [(:r_nuclear point)]
                                                    :name (str "L = " L " (Nuclear)")
                                                    :type "scatter"
-                                                   :mode "lines+markers"}
+                                                   :mode "lines+markers"
+                                                   :line (merge plotly-spline-line)}
                                          :coulomb-nuclear {:x [(:energy point)]
                                                           :y [(:r_coulomb_nuclear point)]
                                                           :name (str "L = " L " (Coul+Nuc)")
                                                           :type "scatter"
                                                           :mode "lines+markers"
-                                                          :line {:dash "dash"}}})))))
+                                                          :line (merge plotly-spline-line {:dash "dash"})}})))))
                        {} data)
-        plot-data (clj->js (mapcat (fn [trace] [(:nuclear trace) (:coulomb-nuclear trace)]) (vals traces)))
+        plot-data (clj->js (mapcat (fn [trace]
+                                     [(sort-trace-by-x (:nuclear trace))
+                                      (sort-trace-by-x (:coulomb-nuclear trace))])
+                                   (vals traces)))
         layout (clj->js {:title "R-Matrix Values Comparison"
                          :xaxis {:title "Energy (MeV)" :gridcolor "#e0e0e0"}
                          :yaxis {:title "R-Matrix" :gridcolor "#e0e0e0"}
@@ -435,24 +449,24 @@
 ;; Plot potentials
 (defn plot-potentials []
   (let [data (:potentials (:current-data @dashboard-state))
-        woods-saxon (clj->js {:x (map :radius data)
-                              :y (map :woods_saxon data)
-                              :name "Woods-Saxon"
-                              :type "scatter"
-                              :mode "lines"
-                              :line {:color "blue" :width 3}})
-        coulomb (clj->js {:x (map :radius data)
-                          :y (map :coulomb data)
-                          :name "Coulomb"
-                          :type "scatter"
-                          :mode "lines"
-                          :line {:color "red" :width 3}})
-        combined (clj->js {:x (map :radius data)
-                            :y (map :combined data)
-                            :name "Combined"
-                            :type "scatter"
-                            :mode "lines"
-                            :line {:color "green" :width 3}})
+        woods-saxon (clj->js (sort-trace-by-x {:x (mapv :radius data)
+                                               :y (mapv :woods_saxon data)
+                                               :name "Woods-Saxon"
+                                               :type "scatter"
+                                               :mode "lines"
+                                               :line (merge {:color "blue" :width 3} plotly-spline-line)}))
+        coulomb (clj->js (sort-trace-by-x {:x (mapv :radius data)
+                                           :y (mapv :coulomb data)
+                                           :name "Coulomb"
+                                           :type "scatter"
+                                           :mode "lines"
+                                           :line (merge {:color "red" :width 3} plotly-spline-line)}))
+        combined (clj->js (sort-trace-by-x {:x (mapv :radius data)
+                                          :y (mapv :combined data)
+                                          :name "Combined"
+                                          :type "scatter"
+                                          :mode "lines"
+                                          :line (merge {:color "green" :width 3} plotly-spline-line)}))
         layout (clj->js {:title "Nuclear Potentials vs Radius"
                          :xaxis {:title "Radius (fm)" :gridcolor "#e0e0e0"}
                          :yaxis {:title "Potential (MeV)" :gridcolor "#e0e0e0"}
@@ -466,13 +480,13 @@
 ;; Plot cross sections
 (defn plot-cross-sections []
   (let [data (:cross_sections (:current-data @dashboard-state))
-        trace (clj->js {:x (map :energy data)
-                        :y (map :total_cross_section data)
-                        :name "Total Cross-Section"
-                        :type "scatter"
-                        :mode "lines+markers"
-                        :line {:color "purple" :width 3}
-                        :marker {:size 6}})
+        trace (clj->js (sort-trace-by-x {:x (mapv :energy data)
+                                        :y (mapv :total_cross_section data)
+                                        :name "Total Cross-Section"
+                                        :type "scatter"
+                                        :mode "lines+markers"
+                                        :line (merge {:color "purple" :width 3} plotly-spline-line)
+                                        :marker {:size 6}}))
         layout (clj->js {:title "Total Cross-Sections vs Energy"
                          :xaxis {:title "Energy (MeV)" :gridcolor "#e0e0e0"}
                          :yaxis {:title "Cross-Section (arbitrary units)" :type "log" :gridcolor "#e0e0e0"}
@@ -501,33 +515,37 @@
                                                :name (str "L = " L)
                                                :type "scatter"
                                                :mode "lines+markers"
+                                               :line (merge plotly-spline-line)
                                                :showlegend true})))))
                              {} phase-data)
-        traces (clj->js (concat (vals phase-traces)
-                                [(clj->js {:x (map :radius potential-data)
-                                            :y (map :woods_saxon potential-data)
-                                            :name "Woods-Saxon"
-                                            :type "scatter"
-                                            :mode "lines"
-                                            :xaxis "x2"
-                                            :yaxis "y2"
-                                            :showlegend false})
-                                 (clj->js {:x (map :radius potential-data)
-                                           :y (map :coulomb potential-data)
-                                           :name "Coulomb"
-                                           :type "scatter"
-                                           :mode "lines"
-                                           :xaxis "x2"
-                                           :yaxis "y2"
-                                           :showlegend false})
-                                 (clj->js {:x (map :energy cross-section-data)
-                                           :y (map :total_cross_section cross-section-data)
-                                           :name "Cross-Section"
-                                           :type "scatter"
-                                           :mode "lines"
-                                           :xaxis "x3"
-                                           :yaxis "y3"
-                                           :showlegend false})]))
+        traces (clj->js (concat (mapv sort-trace-by-x (vals phase-traces))
+                                [(clj->js (sort-trace-by-x {:x (mapv :radius potential-data)
+                                                            :y (mapv :woods_saxon potential-data)
+                                                            :name "Woods-Saxon"
+                                                            :type "scatter"
+                                                            :mode "lines"
+                                                            :line (merge plotly-spline-line)
+                                                            :xaxis "x2"
+                                                            :yaxis "y2"
+                                                            :showlegend false}))
+                                 (clj->js (sort-trace-by-x {:x (mapv :radius potential-data)
+                                                           :y (mapv :coulomb potential-data)
+                                                           :name "Coulomb"
+                                                           :type "scatter"
+                                                           :mode "lines"
+                                                           :line (merge plotly-spline-line)
+                                                           :xaxis "x2"
+                                                           :yaxis "y2"
+                                                           :showlegend false}))
+                                 (clj->js (sort-trace-by-x {:x (mapv :energy cross-section-data)
+                                                           :y (mapv :total_cross_section cross-section-data)
+                                                           :name "Cross-Section"
+                                                           :type "scatter"
+                                                           :mode "lines"
+                                                           :line (merge plotly-spline-line)
+                                                           :xaxis "x3"
+                                                           :yaxis "y3"
+                                                           :showlegend false}))]))
         layout (clj->js {:title "DWBA Comprehensive Dashboard"
                          :grid {:rows 2
                                 :columns 2
@@ -563,10 +581,10 @@
                                             :name (str "E = " E " MeV")
                                             :type "scatter"
                                             :mode "lines+markers"
-                                            :line {:width 2}
+                                            :line (merge {:width 2} plotly-spline-line)
                                             :marker {:size 4}})))))
                            {} data)
-            plot-data (clj->js (vals traces))
+            plot-data (clj->js (mapv sort-trace-by-x (vals traces)))
             layout (clj->js {:title "Elastic Scattering Differential Cross-Section"
                              :xaxis {:title "Scattering angle θ_cm (degrees)" :gridcolor "#e0e0e0"}
                              :yaxis {:title "dσ/dΩ (mb/sr)" :type "log" :gridcolor "#e0e0e0"}
@@ -594,10 +612,10 @@
                                              :name (str "L = " L)
                                              :type "scatter"
                                              :mode "lines+markers"
-                                             :line {:width 3}
+                                             :line (merge {:width 3} plotly-spline-line)
                                              :marker {:size 6}})))))
                            {} data)
-            plot-data (clj->js (vals traces))
+            plot-data (clj->js (mapv sort-trace-by-x (vals traces)))
             layout (clj->js {:title "Inelastic Scattering Differential Cross-Section"
                              :xaxis {:title "Energy (MeV)" :gridcolor "#e0e0e0"}
                              :yaxis {:title "dσ/dΩ (mb/sr)" :type "log" :gridcolor "#e0e0e0"}
@@ -608,7 +626,7 @@
                              :margin {:t 50 :b 50 :l 60 :r 30}})]
         (.newPlot plotly "inelastic-plot" plot-data layout (clj->js {:responsive true}))))))
 
-;; Plot transfer (angle grid like handbook default / POST d-p, or legacy L vs E)
+;; Plot transfer (angle grid like transfer-default / POST d-p, or legacy L vs E)
 (defn plot-transfer []
   (let [cd (:current-data @dashboard-state)
         data (:transfer cd)]
@@ -623,17 +641,18 @@
             (if has-angle?
               (let [energies (sort (distinct (map :energy data)))]
                 (clj->js
-                 (vec (for [E energies
-                            :let [pts (vec (filter #(= (:energy %) E) data))]]
-                        {:x (mapv :angle pts)
-                         :y (mapv #(max (double (or (ds %) 0.0)) log-floor) pts)
-                         :name (if (> (count energies) 1)
-                                 (str "E = " E " MeV")
-                                 (str label ", E = " E " MeV"))
-                         :type "scatter"
-                         :mode "lines+markers"
-                         :line {:width 3}
-                         :marker {:size 6}}))))
+                 (mapv sort-trace-by-x
+                       (vec (for [E energies
+                                  :let [pts (vec (filter #(= (:energy %) E) data))]]
+                              {:x (mapv :angle pts)
+                               :y (mapv #(max (double (or (ds %) 0.0)) log-floor) pts)
+                               :name (if (> (count energies) 1)
+                                       (str "E = " E " MeV")
+                                       (str label ", E = " E " MeV"))
+                               :type "scatter"
+                               :mode "lines+markers"
+                               :line (merge {:width 3} plotly-spline-line)
+                               :marker {:size 6}})))))
               (let [traces (reduce (fn [traces point]
                                      (let [L (:L point)]
                                        (update traces L
@@ -647,10 +666,10 @@
                                                     :name (str "L = " L)
                                                     :type "scatter"
                                                     :mode "lines+markers"
-                                                    :line {:width 3}
+                                                    :line (merge {:width 3} plotly-spline-line)
                                                     :marker {:size 6}})))))
                                    {} data)]
-                (clj->js (vec (vals traces)))))
+                (clj->js (mapv sort-trace-by-x (vals traces)))))
             layout (clj->js {:title "Transfer Reaction Differential Cross-Section"
                              :xaxis {:title x-title :gridcolor "#e0e0e0"}
                              :yaxis {:title "dσ/dΩ (mb/sr)" :type "log" :gridcolor "#e0e0e0"}

@@ -223,9 +223,10 @@
                     </div>
                     <div class="col-md-6">
                         <div class="parameter-group">
-                            <label for="L-values">Angular Momenta</label>
+                            <label for="L-values">Angular momenta <em>L</em> (channel partial waves)</label>
                             <input type="text" class="form-control" id="L-values" value="0,1,2,3,4,5" 
                                    placeholder="Comma-separated values">
+                            <small class="text-muted">For phase shift, R-matrix, inelastic — not orbital ℓ on the Transfer tab.</small>
                         </div>
                     </div>
                 </div>
@@ -344,7 +345,7 @@
                         <p class="text-muted small mb-2">
                             Computes single-channel elastic scattering for a chosen projectile + target, using the Woods–Saxon parameters above
                             as the effective optical potential for that system.
-                            Elastic dσ/dΩ always sums partial waves <strong>L = 0 … 39</strong> (<em>L</em> &lt; 40) for a stable, converged partial-wave sum; the <strong>Angular momenta</strong> field on the main page applies to the <em>phase shift / R-matrix / inelastic / transfer</em> calculations only, not to this elastic cross section.
+                            Elastic dσ/dΩ always sums partial waves <strong>L = 0 … 39</strong> (distorted-wave <em>L</em> &lt; 40) for a converged sum; the main <strong>Angular momenta</strong> field applies to <em>phase shift / R-matrix / inelastic</em> only. The <strong>Transfer</strong> tab uses orbital <strong>ℓ</strong> for coupling and amplitude maps, not entrance-channel partial waves.
                         </p>
                         <div class="row mb-3">
                             <div class="col-md-4">
@@ -490,6 +491,7 @@
                                     <select class="form-select" id="transfer_target">
                                         <option value="16O" selected>¹⁶O</option>
                                         <option value="12C">¹²C</option>
+                                        <option value="generic">Generic (set A, Z)</option>
                                     </select>
                                 </div>
                             </div>
@@ -498,7 +500,7 @@
                                     <label for="reaction_type">Reaction type</label>
                                     <select class="form-select" id="reaction_type">
                                         <option value="p-d" selected>(p,d) – pickup (default)</option>
-                                        <option value="d-p">(d,p) – stripping (¹⁶O: handbook ZR)</option>
+                                        <option value="d-p">(d,p) – stripping (¹⁶O preset)</option>
                                         <option value="d-n">(d,n) – proton transfer</option>
                                         <option value="n-d">(n,d) – proton pickup</option>
                                         <option value="alpha-t">(α,t) – proton transfer</option>
@@ -507,7 +509,24 @@
                                 </div>
                             </div>
                         </div>
-                        <p class="text-muted small mb-0">Use the boxes below for transfer-specific kinematics, bound-state well, optical (imaginary) terms, and radial mesh. Leave energies blank on this tab to use the main <strong>Energy range</strong> field.</p>
+                        <div class="row mb-2" id="transfer-generic-AZ-row" style="display: none;">
+                            <div class="col-md-4">
+                                <div class="parameter-group">
+                                    <label for="transfer_target_A">Target A (mass number)</label>
+                                    <input type="number" class="form-control" id="transfer_target_A" min="2" max="300" value="40" step="1" title="For generic (p,d) default curve: A ≥ 2">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="parameter-group">
+                                    <label for="transfer_target_Z">Target Z (atomic number)</label>
+                                    <input type="number" class="form-control" id="transfer_target_Z" min="0" max="120" value="20" step="1" title="0 ≤ Z ≤ A">
+                                </div>
+                            </div>
+                            <div class="col-md-4 d-flex align-items-end">
+                                <p class="text-muted small mb-2">Generic preset uses approximate masses (931.494 MeV/c² per nucleon), **Q**, and placeholder separation energies for the bound-state well. **(d,p)** stripping curve is still the ¹⁶O benchmark.</p>
+                            </div>
+                        </div>
+                        <p class="text-muted small mb-0">Use the boxes below for transfer-specific kinematics, bound-state well, optical (imaginary) terms, and radial mesh. <strong>ℓ</strong> denotes orbital multipoles in the reduced <em>T<sub>ℓ</sub></em> coupling (not distorted-wave <em>L</em><sub>α</sub> sums). Leave energies blank on this tab to use the main <strong>Energy range</strong> field.</p>
                     </div>
 
                     <div class="row g-3 mb-3">
@@ -524,9 +543,9 @@
                                     </div>
                                     <div class="col-md-6">
                                         <div class="parameter-group">
-                                            <label for="transfer_L_values">Partial waves <em>L</em></label>
-                                            <input type="text" class="form-control" id="transfer_L_values" value="1" placeholder="1">
-                                            <small class="text-muted">Default 1 for schematic (p,d)</small>
+                                            <label for="transfer_L_values">Orbital ℓ list (comma-separated)</label>
+                                            <input type="text" class="form-control" id="transfer_L_values" value="1" placeholder="e.g. 0,1,2">
+                                            <small class="text-muted">Sent with energies as request <code>L_values</code>; multipole ℓ, not <em>L</em><sub>α</sub></small>
                                         </div>
                                     </div>
                                     <div class="col-md-4">
@@ -537,19 +556,19 @@
                                     </div>
                                     <div class="col-md-4">
                                         <div class="parameter-group">
-                                            <label for="transfer_partial_L"><em>L</em> in |T<sub>L</sub>|² map</label>
+                                            <label for="transfer_partial_L">ℓ for <em>T</em><sub>ℓ</sub> in <strong>|T<sub>ℓ</sub>|²</strong> map</label>
                                             <input type="number" class="form-control" id="transfer_partial_L" value="1" min="0" max="20" step="1">
                                         </div>
                                     </div>
                                     <div class="col-md-2">
                                         <div class="parameter-group">
-                                            <label for="transfer_l_i"><em>l</em><sub>i</sub></label>
+                                            <label for="transfer_l_i">ℓ<sub>i</sub> (bound initial)</label>
                                             <input type="number" class="form-control" id="transfer_l_i" value="1" min="0" max="10" step="1">
                                         </div>
                                     </div>
                                     <div class="col-md-2">
                                         <div class="parameter-group">
-                                            <label for="transfer_l_f"><em>l</em><sub>f</sub></label>
+                                            <label for="transfer_l_f">ℓ<sub>f</sub> (bound final)</label>
                                             <input type="number" class="form-control" id="transfer_l_f" value="0" min="0" max="10" step="1">
                                         </div>
                                     </div>
@@ -639,7 +658,7 @@
                     </div>
                     <div class="plot-container">
                         <div class="plot-title">Transfer Reaction Differential Cross-Section</div>
-                        <p class="text-muted small mb-2">Default curve (on load / when you change <strong>target</strong> or <strong>reaction type</strong>): <span id="transfer-default-label">16O(p,d)15O</span> at 20 MeV lab. <strong>¹⁶O + (d,p)</strong> uses the <strong>handbook</strong> pipeline (<code>o16-dp-handbook</code>). Use Calculate for a full scan with current energies and mesh.</p>
+                        <p class="text-muted small mb-2">Default curve (on load / when you change <strong>target</strong> or <strong>reaction type</strong>): <span id="transfer-default-label">16O(p,d)15O</span> at 20 MeV lab. For <strong>¹⁶O + (d,p)</strong>, the preset is ZR **¹⁶O(d,p)** (<strong>mb/sr</strong>, CM). Use Calculate for a full scan with current energies and mesh.</p>
                         <div id="transfer-plot" style="height: 500px;"></div>
                     </div>
                 </div>

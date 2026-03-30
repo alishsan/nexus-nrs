@@ -2,17 +2,18 @@
   "¹⁶O(d,p)¹⁷O g.s. stripping — **handbook** (*Handbook of direct nuclear reaction for retarded theorist*)
   ZR conventions, parallel to **`dwba.benchmark.ca40-pd-handbook`** with **α = d+¹⁶O**, **β = p+¹⁷O**.
 
-  **Radial (§5.4–5.5.2):** **F_{ℓsj} = R_n = u/r** from the **bound neutron in the residual** (¹⁷O);
-  **`handbook-radial-integral-I-zr-from-neutron-bound`** with **M_A = M(¹⁶O)**, **M_B = M(¹⁷O)**,
-  **zr = M_A/M_B** (**`austern-zr-chi-exit-mass-ratio`**).
+  **Radial:** **F_{ℓsj} = R_n = u/r** (bound neutron in **¹⁷O**); **`handbook-radial-integral-I-zr-from-neutron-bound`**
+  uses **(5.5)** **(M_B/M_A)(4π/(k_α k_β))** on **∫ F R_α R_β r² dr** (same **I** as Austern ZR for this **β** / **dσ** chain). **M_A = M(¹⁶O)**, **M_B = M(¹⁷O)**.
 
-  **Angular:** **N. Austern (5.6)** via **`austern-reduced-amplitude-beta-sum-eq-5-6`** + Coulomb **σ_L** on rows.
+  **Angular:** **`handbook-zr-multipole-amplitude-sum`** + **`handbook-zr-rows-with-coulomb-sigma`**.
 
-  **Amplitude:** **T_m ≈ D₀ √(2ℓ+1) β_m** and **`transfer-differential-cross-section`**; **D₀** from **`zero-range-constant :d-p`**.
+  **Amplitude:** **T_m ≈ D₀ √(2ℓ+1) β_m** and **`transfer-differential-cross-section`** → **mb/sr** (same dimensional unit as typical handbook **mb/sr** plots).
+
+  **Absolute scale (mb/sr):** depends on optical parameters, bound well, **D₀**, and how **χ** are normalized. This benchmark defaults to **`:coulomb-tail`** for **χ** (**`distorted-wave-optical`**). The optional **`:chi-normalize-mode :max`** uses peak-normalized **u** (same mode as the default in **`ca40-dwuck`** distorted waves); it does **not** guarantee closer agreement with any particular handbook figure — match **potentials, energies, and conventions** from that figure when comparing absolute **mb/sr**. For **Ca40(d,p)** vs **DWUCK4** listing scale, see **`ca40-dp-flux-scale-to-embedded-dwuck`** (flux/asymptotics, not automatically the same as this partial-wave builder).
 
   **Spin:** **(2J_f+1)/(2J_i+1)** for **J(¹⁶O)=0**, **J(¹⁷O)=5/2** and unpolarized deuteron **× 1/3** (same pattern as **`ca40-dp-dsigma-mb-sr`**, no extra **½** — that factor is for **(p,d)** entrance proton).
 
-  Optics are **Ca40 listing depths/radii scaled** to **A≈16–17**, **Z=8** — illustrative; tune before comparing to experiment."
+  Optics are **Ca40 listing depths/radii scaled** to **A≈16–17**, **Z=8** — illustrative; tune before comparing to experiment or a specific handbook figure."
   (:require [dwba.transfer :as t]
             [functions :as fn :refer [mass-factor-from-mu channel-sommerfeld-eta lab-to-cm-energy]]
             [complex :refer [mag mul add complex-cartesian]]))
@@ -100,7 +101,7 @@
 
 (defn- o16-dp-rows-coulomb-sigma
   [base-rows eta-i eta-f]
-  (t/austern-radial-rows-with-coulomb-sigma base-rows eta-i eta-f))
+  (t/handbook-zr-rows-with-coulomb-sigma base-rows eta-i eta-f))
 
 (defn- o16-dp-filter-rows-by-L-alpha
   [rows L-alpha-only]
@@ -111,13 +112,20 @@
 
 (defn o16-dp-radial-I-rows-handbook
   "Build **{:L-alpha :L-beta :I}** with **`handbook-radial-integral-I-zr-from-neutron-bound`**.
-  **φ_n** — neutron in **¹⁷O** (**l=2**, illustrative well); **χ_α** — **d** on **¹⁶O**; **χ_β** — **p** on **¹⁷O**."
-  [& {:keys [r-max h L-max e-cm-i transfer-ell]
-      :or {r-max 100.0 h 0.05 L-max 20 transfer-ell o16-dp-bound-ell}}]
+  **φ_n** — neutron in **¹⁷O** (**l=2**, illustrative well); **χ_α** — **d** on **¹⁶O**; **χ_β** — **p** on **¹⁷O**.
+
+  **`:chi-normalize-mode`** — **`:coulomb-tail`** (default): **|u(r_max)|** matched to Coulomb Hankel.
+  **`:max`**: **`distorted-wave-optical`** default — scale **u** so peak **|u| = 1** (same mode as **`ca40-dwuck`** χ). **mb/sr** may be larger or smaller than **`:coulomb-tail`** depending on **L**, **η**, and absorption."
+  [& {:keys [r-max h L-max e-cm-i transfer-ell chi-normalize-mode]
+      :or {r-max 100.0 h 0.05 L-max 20 transfer-ell o16-dp-bound-ell
+           chi-normalize-mode :coulomb-tail}}]
+  (when-not (#{:coulomb-tail :max} chi-normalize-mode)
+    (throw (ex-info "o16-dp-radial-I-rows-handbook: :chi-normalize-mode must be :coulomb-tail or :max"
+                    {:chi-normalize-mode chi-normalize-mode})))
   (let [e-cm-i (double (or e-cm-i (:e-cm-i (o16-dp-kinematics))))
         {:keys [mass-factor-i mass-factor-f e-cm-f k-i k-f M-target M-residual]}
         (o16-dp-kinematics e-cm-i)
-        zr (t/austern-zr-chi-exit-mass-ratio M-target M-residual)
+        zr (t/handbook-zr-chi-exit-mass-ratio M-target M-residual)
         ell (long transfer-ell)
         phi-n (t/normalize-bound-state
                (t/solve-bound-state-numerov -4.1438 2 56.0 2.85 0.6 0.048 h r-max) h)
@@ -129,22 +137,30 @@
         chi-alpha!
         (memoize
          (fn [^long La]
-           (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
-                                     (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
-                                     r-max h mass-factor-i
-                                     :normalize-mode :coulomb-tail
-                                     :tail-eta eta-i :tail-rho rho-i)))
+           (if (= :max chi-normalize-mode)
+             (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
+                                       (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
+                                       r-max h mass-factor-i)
+             (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
+                                       (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
+                                       r-max h mass-factor-i
+                                       :normalize-mode :coulomb-tail
+                                       :tail-eta eta-i :tail-rho rho-i))))
         chi-beta!
         (memoize
          (fn [^long Lb]
-           (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
-                                     (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
-                                     r-max h mass-factor-f
-                                     :normalize-mode :coulomb-tail
-                                     :tail-eta eta-f :tail-rho rho-f)))]
+           (if (= :max chi-normalize-mode)
+             (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
+                                       (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
+                                       r-max h mass-factor-f)
+             (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
+                                       (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
+                                       r-max h mass-factor-f
+                                       :normalize-mode :coulomb-tail
+                                       :tail-eta eta-f :tail-rho rho-f))))]
     (vec
      (for [La (range 0 (inc (long L-max)))
-           Lb (t/austern-eq-5-6-admissible-L-beta-values La ell (long L-max))
+           Lb (t/handbook-zr-partial-wave-L-beta-values La ell (long L-max))
            :let [Ireal (t/handbook-radial-integral-I-zr-from-neutron-bound
                         phi-n (chi-alpha! La) (chi-beta! Lb) h
                         M-target M-residual k-i k-f zr)]
@@ -159,7 +175,7 @@
         ms (range (- ell) (inc ell))]
     (if coherent-m-beta?
       (let [sum-b (reduce (fn [acc ^long m-ell]
-                            (add acc (mul pref (t/austern-reduced-amplitude-beta-sum-eq-5-6
+                            (add acc (mul pref (t/handbook-zr-multipole-amplitude-sum
                                                   ell m-ell theta-rad radial-rows-sigma))))
                           (complex-cartesian 0.0 0.0)
                           ms)
@@ -168,7 +184,7 @@
       (double
        (reduce
         (fn [^double acc ^long m-ell]
-          (let [beta (t/austern-reduced-amplitude-beta-sum-eq-5-6 ell m-ell theta-rad radial-rows-sigma)
+          (let [beta (t/handbook-zr-multipole-amplitude-sum ell m-ell theta-rad radial-rows-sigma)
                 Tm (mul pref beta)
                 Tmag (mag Tm)]
             (+ acc (* Tmag Tmag))))
@@ -176,12 +192,15 @@
         ms)))))
 
 (defn o16-dp-dsigma-handbook-mb-sr
-  "**dσ/dΩ (mb/sr)** — handbook **F_n** + Austern **(5.6)** + **`transfer-differential-cross-section`**."
+  "**dσ/dΩ (mb/sr)** — handbook **F_n**, **(5.5)** radial **I**, **`handbook-zr-multipole-amplitude-sum`**, **`transfer-differential-cross-section`**.
+
+  **`:chi-normalize-mode`** — passed to **`o16-dp-radial-I-rows-handbook`** when **`:radial-rows-sigma`** is omitted (**`:coulomb-tail`** default, **`:max`** for DWUCK-style peak-normalized χ)."
   [theta-deg & {:keys [e-cm-i r-max h L-max S-factor radial-rows-sigma
-                       coherent-m-beta? cm-asymmetry-kappa L-alpha-only]
+                       coherent-m-beta? cm-asymmetry-kappa L-alpha-only chi-normalize-mode]
                 :or {r-max 100.0 h 0.05 L-max 20 S-factor 1.0
                      coherent-m-beta? false
-                     cm-asymmetry-kappa 0.0}}]
+                     cm-asymmetry-kappa 0.0
+                     chi-normalize-mode :coulomb-tail}}]
   (let [eci (if (some? e-cm-i) (double e-cm-i) (:e-cm-i (o16-dp-kinematics)))
         {:keys [mass-factor-i mass-factor-f e-cm-f k-i k-f]} (o16-dp-kinematics eci)
         z12 (* 1.44 1.0 8.0)
@@ -190,7 +209,8 @@
         rows-sig (o16-dp-filter-rows-by-L-alpha
                   (or radial-rows-sigma
                       (o16-dp-rows-coulomb-sigma
-                       (o16-dp-radial-I-rows-handbook :r-max r-max :h h :L-max L-max :e-cm-i eci)
+                       (o16-dp-radial-I-rows-handbook :r-max r-max :h h :L-max L-max :e-cm-i eci
+                         :chi-normalize-mode chi-normalize-mode)
                        eta-i eta-f))
                   L-alpha-only)
         D0 (t/zero-range-constant :d-p)
@@ -206,16 +226,18 @@
 
 (defn o16-dp-angular-curve-handbook-mb-sr
   [theta-degrees & {:keys [e-cm-i r-max h L-max S-factor
-                           coherent-m-beta? cm-asymmetry-kappa L-alpha-only]
+                           coherent-m-beta? cm-asymmetry-kappa L-alpha-only chi-normalize-mode]
                     :or {r-max 100.0 h 0.05 L-max 20 S-factor 1.0
                          coherent-m-beta? false
-                         cm-asymmetry-kappa 0.0}}]
+                         cm-asymmetry-kappa 0.0
+                         chi-normalize-mode :coulomb-tail}}]
   (let [eci (if (some? e-cm-i) (double e-cm-i) (:e-cm-i (o16-dp-kinematics)))
         {:keys [mass-factor-i mass-factor-f e-cm-i e-cm-f]} (o16-dp-kinematics eci)
         z12 (* 1.44 1.0 8.0)
         eta-i (sommerfeld-eta-channel e-cm-i mass-factor-i z12)
         eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)
-        base-rows (o16-dp-radial-I-rows-handbook :r-max r-max :h h :L-max L-max :e-cm-i e-cm-i)
+        base-rows (o16-dp-radial-I-rows-handbook :r-max r-max :h h :L-max L-max :e-cm-i e-cm-i
+                   :chi-normalize-mode chi-normalize-mode)
         rows-sig (o16-dp-filter-rows-by-L-alpha
                   (o16-dp-rows-coulomb-sigma base-rows eta-i eta-f)
                   L-alpha-only)]

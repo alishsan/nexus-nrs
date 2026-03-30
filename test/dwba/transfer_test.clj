@@ -832,8 +832,8 @@
     (is (Double/isFinite I-explicit))
     (is (< (Math/abs (- I-explicit I-combo)) 1e-10))))
 
-(deftest handbook-radial-integral-I-zr-prefactor-vs-austern-test
-  "Same **F**, **u** grids: **handbook** integral / Austern **(5.5)** integral = **√(4π)/(4π) = 1/√(4π)**."
+(deftest handbook-radial-integral-I-zr-matches-austern-eq-5-5-test
+  "Same **F**, **u** grids: **`handbook-radial-integral-I-zr`** uses **(5.5)** prefactor — equals **`austern-radial-integral-I-zr-eq-5-5-from-u`**."
   (let [h 0.05
         n 30
         phi-i (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
@@ -844,11 +844,18 @@
         rho (t/austern-zr-chi-exit-mass-ratio M-A M-B)
         F (t/F-lsj-r-from-bound-reduced-u phi-i phi-f h)
         I-a (t/austern-radial-integral-I-zr-eq-5-5-from-u F ua ub h M-A M-B k-a k-b rho)
-        I-h (t/handbook-radial-integral-I-zr F ua ub h M-A M-B k-a k-b rho)
-        expect-ratio (/ (Math/sqrt (* 4.0 Math/PI)) (* 4.0 Math/PI))]
+        I-h (t/handbook-radial-integral-I-zr F ua ub h M-A M-B k-a k-b rho)]
     (is (Double/isFinite I-a))
     (is (Double/isFinite I-h))
-    (is (< (Math/abs (- (/ I-h I-a) expect-ratio)) 1e-9))))
+    (is (< (Math/abs (- I-h I-a)) 1e-9))))
+
+(deftest handbook-display-prefactor-is-sqrt-4pi-over-4pi-of-austern-test
+  "Handbook §5.5.2 **display** prefactor / Austern **(5.5)** = **√(4π)/(4π)**."
+  (let [M-A 40.0 M-B 41.0 k-a 0.8 k-b 0.9
+        p-a (t/austern-radial-integral-prefactor-eq-5-5 M-A M-B k-a k-b)
+        p-h (t/handbook-radial-integral-prefactor-handbook-display-zr M-A M-B k-a k-b)
+        expect (/ (Math/sqrt (* 4.0 Math/PI)) (* 4.0 Math/PI))]
+    (is (< (Math/abs (- (/ p-h p-a) expect)) 1e-12))))
 
 (deftest handbook-F-lsj-neutron-is-radial-R-test
   (let [as-double #(double (if (c/complex? %) (re %) %))
@@ -922,6 +929,40 @@
     (is (= 3 (count m)))
     (is (every? #(contains? m %) [0 1 2]))
     (is (every? #(Double/isFinite (double %)) (vals m)))))
+
+(deftest nuclear-phase-shifts-map-pure-coulomb-near-zero-test
+  "For point Coulomb (**`s-matrix` = 1**), **`nuclear-phase-shifts-map`** = **`phase-shift`** = **½ arg(1) = 0**."
+  (let [E 12.0
+        V0 [0.0 0.0 0.65]
+        m-p 938.272
+        m40 (* 40.0 931.494)
+        mu (/ (* m-p m40) (+ m-p m40))
+        mfac (mass-factor-from-mu mu)
+        z12 (* 1 20 1.44)]
+    (binding [functions/mass-factor mfac
+              functions/Z1Z2ee z12
+              functions/*elastic-imag-ws-params* nil]
+      (let [m (t/nuclear-phase-shifts-map E V0 4)]
+        (doseq [L (range 5)
+                :let [d (double (m L))]]
+          (is (< (Math/abs d) 1e-7) (str "L=" L " δ=" d)))))))
+
+(deftest coulomb-elastic-f-n-vanishes-when-s-matrix-is-one-test
+  "Regression (transfer + inelastic callers): **`s-matrix`** is **S^n** from the Hankel ratio, not **M_L/e^{2iσ}**.
+  Point Coulomb ⇒ **S^n = 1** ⇒ **e^{2iσ}(S^n−1) = 0** ⇒ **`elastic-nuclear-amplitude-fn`** ≈ **0** (same channel bindings as pure-Coulomb **δ** test)."
+  (let [E 12.0
+        V0 [0.0 0.0 0.65]
+        m-p 938.272
+        m40 (* 40.0 931.494)
+        mu (/ (* m-p m40) (+ m-p m40))
+        mfac (mass-factor-from-mu mu)
+        z12 (* 1 20 1.44)
+        th (/ Math/PI 4.0)]
+    (binding [functions/mass-factor mfac
+              functions/Z1Z2ee z12
+              functions/*elastic-imag-ws-params* nil]
+      (let [f-n (elastic-nuclear-amplitude-fn E V0 th 12)]
+        (is (< (double (mag f-n)) 1e-5) (str "|f_N|=" (mag f-n)))))))
 
 (deftest austern-eq-5-6-cg-product-Lbeta-l-Lalpha-test
   "Eq. (5.6) CG product matches **jam/clebsch-gordan-exact** pair; **L_α=L_β=ℓ=m=0** ⇒ **1**."

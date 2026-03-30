@@ -22,8 +22,8 @@
 
   - **Coulomb** enters through **`optical-potential-woods-saxon`** in **`distorted-wave-optical`** (χ_d, χ_p).
   - **Radial** zero-range POST: **`transfer-amplitude-post`** → **T_L** per partial wave **L**, with
-    **Austern Eq. (5.3)** exit-radius sampling **`:zr-chi-exit-mass-ratio` = M_Ca40/M_Ca41** (target/residual
-    masses in MeV/c² from this listing’s kinematics).
+    **handbook** single-nucleon **F_{ℓsj}=R** from **`:handbook-F-from :phi-f`** (captured nucleon in **Ca41**)
+    and **Austern Eq. (5.3)** exit-radius sampling **`:zr-chi-exit-mass-ratio` = M_Ca40/M_Ca41**.
   - **Angular:** coherent or m-sum per **`:angular-mode`**, **l_i=0**, **l_f=3**, **`:Ls`**.
 
   **vs DWUCK4 listing:** still a **reduced** model (ZR POST, max-norm χ). Listing **asymmetry** needs full
@@ -138,7 +138,9 @@
                                         r-max h mass-factor-f)
         D0 (t/zero-range-constant :d-p)]
     (t/transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h :zero-range D0
-                               {:zr-chi-exit-mass-ratio zr-ratio})))
+                               {:zr-chi-exit-mass-ratio zr-ratio
+                                :handbook-F-from :phi-f})))
+
 
 (defn ca40-dp-transfer-T-map
   "Map **{L → T_L}** for each integer L in `Ls` (default **`[3]`** — sole allowed multipole for l_i=0, l_f=3).

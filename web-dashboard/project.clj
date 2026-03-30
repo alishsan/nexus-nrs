@@ -12,11 +12,12 @@
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
                  [org.clojure/data.json "2.4.0"]
+                 ;; Shadowed by parent `../src/fastmath/special.clj` (see root `project.clj`).
                  [generateme/fastmath "3.0.0-alpha4" :exclusions [com.github.haifengl/smile-mkl]]]
   :plugins [[lein-cljsbuild "1.1.8"]]
   :main dwba-web.simple-core
   :target-path "target/%s"
-  ;; Parent `nexus-nrs` sources: transfer benchmark namespaces (e.g. `dwba.benchmark.o16-dp-handbook`).
+  ;; Parent `nexus-nrs` sources: transfer benchmarks under `dwba.benchmark.*`.
   :source-paths ["src" "../src"]
   :profiles {:uberjar {:aot :all}}
   :resource-paths ["resources" "public"]
