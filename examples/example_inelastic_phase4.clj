@@ -3,8 +3,9 @@
 ;; This demonstrates the calculation of inelastic scattering amplitudes
 ;; and differential cross-sections.
 
-(require '[dwba.inelastic :as inel])
-(require '[functions :refer [mass-factor]])
+(require '[dwba.inelastic :as inel]
+         '[functions :refer [mass-factor]]
+         '[complex :as cpx])
 
 ;; ============================================================================
 ;; Example 1: Distorted Waves
@@ -19,12 +20,18 @@
 (def h 0.01)  ; Step size (fm)
 (def r-max 20.0)  ; Maximum radius (fm)
 
-;; Calculate distorted wave for entrance channel (elastic, L=0)
+;; Calculate distorted wave for entrance channel (elastic, L=0) — **neutral** WS Numerov (no Coulomb)
 (def chi-i (inel/distorted-wave-entrance E-incident 0 V-params h r-max))
 (println "Entrance channel distorted wave (L=0):")
 (println "  Length:" (count chi-i))
 (println "  First few values:" (take 5 chi-i))
 (println "  Value at r=2.0 fm:" (nth chi-i (int (/ 2.0 h))))
+(println "")
+
+;; **¹²C (p,p′) schematic:** same **V-params** + **:p** + target Coulomb (complex χ; `take 5` shows `Complex` records)
+(def chi-i-pp (inel/distorted-wave-entrance E-incident 0 V-params h r-max
+                                           :projectile-type :p :target-A 12 :target-Z 6 :E-lab E-incident))
+(println "Entrance (p + ¹²C, WS + Coulomb, L=0) — sample values:" (take 3 chi-i-pp))
 (println "")
 
 ;; Calculate distorted wave for exit channel (inelastic, L=2)
@@ -33,6 +40,12 @@
 (println "  Length:" (count chi-f))
 (println "  First few values:" (take 5 chi-f))
 (println "  Value at r=2.0 fm:" (nth chi-f (int (/ 2.0 h))))
+(println "")
+
+(def chi-f-pp (inel/distorted-wave-exit E-incident E-ex 2 V-params h r-max
+                                       :outgoing-type :p :residual-A 12 :residual-Z 6
+                                       :E-lab (max 0.01 (- E-incident E-ex))))
+(println "Exit (p + ¹²C*, WS + Coulomb, L=2) — sample values:" (take 3 chi-f-pp))
 (println "")
 
 ;; ============================================================================
@@ -57,7 +70,8 @@
       theta (/ Math/PI 2)
       phi 0.0
       V-trans-angular (inel/transition-potential-radial r lambda 0 beta-2 V-params theta phi)]
-  (println (format "  V_trans(%.1f fm, θ=π/2, φ=0) = %.4f MeV" r V-trans-angular)))
+  (println (format "  V_trans(%.1f fm, θ=π/2, φ=0) = %.4f + i%.4f MeV"
+                   r (double (cpx/re V-trans-angular)) (double (cpx/im V-trans-angular)))))
 (println "")
 
 ;; ============================================================================

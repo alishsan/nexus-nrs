@@ -3,6 +3,12 @@
 ;; Calculation of inelastic scattering cross section for 11Li(d,d') reaction
 ;; at E/A = 7.1 MeV exciting the 2.09 MeV L=0 monopole state.
 ;;
+;; **Distorted waves:** **d + ¹¹Li** uses **`distorted-wave-entrance`** / **`distorted-wave-exit`** with
+;; **`optical-potential-woods-saxon`** — **Coulomb (Z_d Z_Li e²)** + real/im Woods–Saxon — and
+;; **`distorted-wave-optical`** (complex Numerov), matching the charged-channel path used e.g. in
+;; **`examples/example_11Li_pp_inelastic.clj`**. For **global** Daehnick/CH89-style potentials without
+;; explicit **V_params**, pass **`V-params`** **`nil`** and the same **:projectile-type** … keys.
+;;
 ;; Reference: "A measurement of scattering of 11Li on a deuteron target at beam 
 ;; energy of E/A = 7.1 MeV (at the center of the target) was performed at the 
 ;; IRIS facility at TRIUMF. The differential cross section of the 2.09 MeV state 
@@ -44,11 +50,13 @@
 ;; Nuclear Parameters
 ;; ============================================================================
 
-;; Woods-Saxon parameters for 11Li (estimated)
-;; 11Li is a halo nucleus, so we need appropriate parameters
-;; Typical values for light nuclei:
-(def V-params [50.0 2.5 0.6])  ; [V0 (MeV), R0 (fm), a0 (fm)]
-;; R0 ≈ 1.2 * A^(1/3) ≈ 1.2 * 11^(1/3) ≈ 2.5 fm
+;; Target identifiers (¹¹Li: Z=3)
+(def A-11 11)
+(def Z-11 3)
+
+;; Woods–Saxon + volume absorption (schematic; not fitted)
+(def V-params [50.0 2.5 0.6])   ; [V0 (MeV), R0 (fm), a0 (fm)]
+(def W-params [10.0 2.5 0.6])   ; [W0, R_W, a_W] — same geometry as V
 
 ;; Deformation parameter for monopole (L=0) "breathing" mode
 ;; For monopole excitations, β_0 is typically smaller than β_2
@@ -67,6 +75,8 @@
 (println "Nuclear Parameters:")
 (println (format "  Woods-Saxon: V₀ = %.1f MeV, R₀ = %.2f fm, a₀ = %.2f fm"
                 (first V-params) (second V-params) (last V-params)))
+(println (format "  Imag WS: W₀ = %.1f MeV, R_W = %.2f fm, a_W = %.2f fm"
+                (first W-params) (second W-params) (nth W-params 2)))
 (println (format "  Monopole deformation: β₀ = %.3f" beta-0))
 (println "")
 
@@ -109,51 +119,38 @@
 (def h 0.01)  ; Step size (fm)
 (def r-max 30.0)  ; Maximum radius (fm) - larger for halo nucleus
 
-;; Entrance channel: elastic scattering (L=0)
-;; Use E_CM for the calculation
-(def L-i 0)  ; Orbital angular momentum in entrance channel
+(def L-i 0)
+(def L-f 0)
 
-;; Option 1: Simple real Woods-Saxon potential (current approach)
-(def chi-i (inel/distorted-wave-entrance E-CM L-i V-params h r-max))
+(def E-lab-exit (max 0.1 (- E-lab E-ex)))
 
-;; Option 2: Full optical potential with imaginary, spin-orbit, and Coulomb terms
-;; Uncomment to use optical potentials:
-;; (require '[dwba.transfer :as t])
-;; (def chi-i-optical (inel/distorted-wave-entrance E-CM L-i nil h r-max
-;;                                                  :projectile-type :d
-;;                                                  :target-A 11
-;;                                                  :target-Z 3
-;;                                                  :E-lab E-lab
-;;                                                  :s 1      ; Deuteron spin
-;;                                                  :j 1      ; Total angular momentum
-;;                                                  :mass-factor mass-f))
-;; (def chi-i chi-i-optical)  ; Use optical potential result
+(def chi-i
+  (inel/distorted-wave-entrance E-CM L-i V-params h r-max
+                                :projectile-type :d
+                                :target-A A-11
+                                :target-Z Z-11
+                                :E-lab E-lab
+                                :W-params W-params
+                                :s 1.0
+                                :j 1.0
+                                :mass-factor mass-f))
 
-(println "Entrance channel:")
+(def chi-f
+  (inel/distorted-wave-exit E-CM E-ex L-f V-params h r-max
+                            :outgoing-type :d
+                            :residual-A A-11
+                            :residual-Z Z-11
+                            :E-lab E-lab-exit
+                            :W-params W-params
+                            :s 1.0
+                            :j 1.0
+                            :mass-factor mass-f))
+
+(println "Entrance channel (d + ¹¹Li, Coulomb + real/imag WS, complex χ):")
 (println (format "  Energy: E_i = %.2f MeV (CM)" E-CM))
-(println (format "  Angular momentum: L_i = %d" L-i))
+(println (format "  Angular momentum: L_i = %d, s_d = 1, j = 1" L-i))
 (println (format "  Wavefunction length: %d points" (count chi-i)))
 (println "")
-
-;; Exit channel: inelastic scattering (L=0 for monopole)
-;; Exit energy: E_f = E_i - E_ex
-(def L-f 0)  ; For monopole, L_f = L_i = 0
-
-;; Option 1: Simple real Woods-Saxon potential (current approach)
-(def chi-f (inel/distorted-wave-exit E-CM E-ex L-f V-params h r-max))
-
-;; Option 2: Full optical potential with imaginary, spin-orbit, and Coulomb terms
-;; Uncomment to use optical potentials:
-;; (def E-f-lab (- E-lab E-ex))  ; Lab energy in exit channel
-;; (def chi-f-optical (inel/distorted-wave-exit E-CM E-ex L-f nil h r-max
-;;                                             :outgoing-type :d
-;;                                             :residual-A 11
-;;                                             :residual-Z 3
-;;                                             :E-lab E-f-lab
-;;                                             :s 1      ; Deuteron spin
-;;                                             :j 1      ; Total angular momentum
-;;                                             :mass-factor mass-f))
-;; (def chi-f chi-f-optical)  ; Use optical potential result
 
 (println "Exit channel:")
 (println (format "  Energy: E_f = E_i - E_ex = %.2f MeV (CM)" (- E-CM E-ex)))
@@ -272,8 +269,10 @@
 
 (def r-asymptotic (* 0.9 r-max))  ; Use 90% of r-max for asymptotic region
 (def idx-asymptotic (int (/ r-asymptotic h)))
-(def u-asymptotic (nth chi-i idx-asymptotic))
-(def u-asymptotic-prev (nth chi-i (dec idx-asymptotic)))
+(defn- chi-sample-mag [z]
+  (if (number? z) (Math/abs (double z)) (mag z)))
+(def u-asymptotic (chi-sample-mag (nth chi-i idx-asymptotic)))
+(def u-asymptotic-prev (chi-sample-mag (nth chi-i (dec idx-asymptotic))))
 (def r-asymptotic-val (* idx-asymptotic h))
 (def r-asymptotic-prev (* (dec idx-asymptotic) h))
 
@@ -283,7 +282,7 @@
 
 (println "Elastic scattering (L=0 partial wave):")
 (println (format "  Wavenumber: k = %.4f fm⁻¹" k-i))
-(println (format "  Wavefunction at r=%.1f fm: %.4e" r-asymptotic-val u-asymptotic))
+(println (format "  |χ| at r≈%.1f fm: %.4e (complex distorted wave)" r-asymptotic-val u-asymptotic))
 (println "  Note: Full phase shift extraction requires asymptotic matching")
 (println "")
 

@@ -2,6 +2,15 @@
 
 This folder contains materials for the Nexus-NRS paper, including benchmark reactions and experimental comparisons.
 
+## LaTeX manuscript (MDPI)
+
+- **`MDPI_template_ACS.zip`**: official MDPI ACS-style template; extract with `unzip -o MDPI_template_ACS.zip` so `Definitions/mdpi.cls` and **`template.tex`** exist beside **`mdpi_proceedings_manuscript.tex`**.
+- **`mdpi_proceedings_manuscript.tex`**: full article using `\documentclass[particles,proceedingpaper,submit,pdftex,moreauthors]{Definitions/mdpi}`. Build from this folder: `pdflatex mdpi_proceedings_manuscript.tex` (run twice for references/LastPage). Place **`nexus_nrs_dashboard.png`** here for the figure.
+- Before submission, switch **`submit`** → **`accept`** in `\documentclass[...]` per MDPI instructions; fill `\datereceived`, `\dateaccepted`, etc.
+- **Graphical abstract (website / TOC):** `graphical_abstract.png` — single self-explanatory image; upload where the submission form asks for it (do **not** place it inside the manuscript-only ZIP unless the instructions say so). Typical specs: raster **PNG** or **TIFF**, **≥600 px** wide, readable at thumbnail size; edit the PNG if you want journal-specific colors or branding.
+- **Zip for MDPI “Manuscript (Word/ZIP)” upload (main text only):** `Nexus-NRS_HALO40_manuscript_MDPI.zip` — contains `mdpi_proceedings_manuscript.tex`, main-text figure `nexus_nrs_dashboard.png`, and `Definitions/` (class files required to compile). **No PDF, no supplementary files** inside the zip (upload supplementary materials separately if the journal asks). Regenerate:  
+  `cd paper && zip -r Nexus-NRS_HALO40_manuscript_MDPI.zip mdpi_proceedings_manuscript.tex nexus_nrs_dashboard.png Definitions -x "*.DS_Store"`
+
 ## Files
 
 1. **`benchmark_reactions.md`** - Complete list of benchmark reactions with parameters, nuclear properties, and key results

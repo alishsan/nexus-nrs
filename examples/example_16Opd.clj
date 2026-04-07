@@ -12,6 +12,12 @@
 ;; - Deuteron: R0 = 1.5 fm, V0 = 50 MeV, a0 = 0.6 fm, l=0
 ;;
 ;; Sister example (stripping): `examples/example_16Odp.clj` — 16O(d,p)17O (**handbook** namespace `o16-dp-handbook`).
+;;
+;; **Web dashboard 16O(p,d):** `GET /api/transfer-default?target=16O&reaction_type=p-d` runs the same pipeline as
+;; this script (`transfer-default-data` in `dwba_web/simple_core.clj`: post DWBA, L = 0…7, h = 0.01 fm, 20 MeV lab).
+;; **`POST /api/transfer`** with `reaction_type: p-d` is a **different** schematic (zero-range overlap from the
+;; shared WS form, global `functions/mass-factor`, `E_f ≈ 0.8 E_lab`, one partial wave) — numbers will not match below.
+;;
 ;; Use (load-file "examples/example_16Opd.clj") or run from project root.
 ;; Own namespace avoids alias conflicts with dwba.core when loaded from REPL.
 ;; Plots: **output/16Opd_dcs.png** (linear y), **output/16Opd_dcs_log.png** (log₁₀ y).

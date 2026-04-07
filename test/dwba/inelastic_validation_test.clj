@@ -167,10 +167,10 @@
       (let [dsigma-values (map :dsigma results)
             diff-1 (Math/abs (- (first dsigma-values) (second dsigma-values)))
             diff-2 (Math/abs (- (second dsigma-values) (last dsigma-values)))]
-        ;; Smaller step size should give more accurate results
-        ;; The difference should decrease as h decreases
-        (is (< diff-2 diff-1) 
-            "Results should converge as step size decreases")))))
+        ;; Differences often shrink with **h**; at ~1e-14 both deltas can be pure float noise.
+        (is (or (< diff-2 diff-1)
+                (< (max diff-1 diff-2) 1e-10))
+            "Results should converge as step size decreases (or stay within numerical noise)")))))
 
 ;; ============================================================================
 ;; Test Case 5: Convergence Tests - r_max Dependence

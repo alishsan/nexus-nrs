@@ -2452,6 +2452,33 @@
             fl (austern-real-scalar (nth integrand-vec (dec n)))]
         (* h3 (+ f0 fl simpson-sum))))))
 
+(defn- austern-radial-simpson-integrate-complex
+  "Composite Simpson's rule, uniform **h**, complex (or real) samples **f(i·h)**."
+  [^double h integrand-vec]
+  (let [n (count integrand-vec)]
+    (cond
+      (zero? n) (complex-cartesian 0.0 0.0)
+      (= n 1) (mul (complex-cartesian h 0.0)
+                   (if (number? (first integrand-vec))
+                     (complex-cartesian (double (first integrand-vec)) 0.0)
+                     (first integrand-vec)))
+      :else
+      (let [simpson-sum (loop [i 1 sum (complex-cartesian 0.0 0.0)]
+                          (if (>= i (dec n))
+                            sum
+                            (let [coeff (if (odd? i) 4.0 2.0)
+                                  term-val (get integrand-vec i)
+                                  term (if (number? term-val)
+                                         (complex-cartesian (* coeff (double term-val)) 0.0)
+                                         (mul (complex-cartesian coeff 0.0) term-val))]
+                              (recur (inc i) (add sum term)))))
+            h3 (/ h 3.0)
+            f0 (let [v (first integrand-vec)]
+                 (if (number? v) (complex-cartesian (double v) 0.0) v))
+            fl (let [v (nth integrand-vec (dec n))]
+                 (if (number? v) (complex-cartesian (double v) 0.0) v))]
+        (mul (complex-cartesian h3 0.0) (add f0 fl simpson-sum))))))
+
 (defn austern-radial-integral-prefactor-eq-5-5
   "Prefactor **(M_B/M_A)(4π/(k_α k_β))** from **N. Austern**, **Eq. (5.5)**.
   **M_B = M_A + M_x** in the book; **k_α**, **k_β** in **fm⁻¹** (same convention as your radial waves)."
@@ -2489,6 +2516,37 @@
     (mapv (fn [^long i]
             (transfer-radial-R-at-r-linear R-beta h (* rho (* (double i) h))))
           (range n))))
+
+(defn austern-radial-integrand-zr-F-Ra-Rb-r2-complex
+  "Like **`austern-radial-integrand-zr-F-Ra-Rb-r2`**, but **f_α**, **f_β** may be **complex** (**R = u/r**).
+  Entries: **F(r) f_α(r) f_β((M_A/M_B)r) r²** (same indexing as real ZR DWBA)."
+  [F-vec u-alpha u-beta h zr-mass-ratio]
+  (let [h* (double h)
+        n (min (count F-vec) (count u-alpha) (count u-beta))
+        fa (radial-R-from-reduced-u u-alpha h*)
+        fb (f-betaL u-beta h* (double zr-mass-ratio) n)]
+    (mapv (fn [^long i]
+            (let [r (* (double i) h*)
+                  fa-i (get fa i)
+                  fb-i (get fb i)
+                  Fi (get F-vec i)
+                  Fi-c (if (number? Fi) (complex-cartesian (double Fi) 0.0) Fi)
+                  fa-c (if (number? fa-i) (complex-cartesian (double fa-i) 0.0) fa-i)
+                  fb-c (if (number? fb-i) (complex-cartesian (double fb-i) 0.0) fb-i)
+                  rsq (* r r)]
+              (mul Fi-c fa-c fb-c (complex-cartesian rsq 0.0))))
+          (range n))))
+
+(defn austern-radial-integral-I-zr-eq-5-5-from-u-complex
+  "Same as **`austern-radial-integral-I-zr-eq-5-5-from-u`** (**Austern (5.5)** prefactor × Simpson), but
+  allows **complex** **f_{αL}**, **f_{βL}** from **complex** optical **`distorted-wave-optical`** **u** (absorption)."
+  [F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
+  (let [integrand (austern-radial-integrand-zr-F-Ra-Rb-r2-complex
+                    F-vec u-alpha u-beta (double h) (double zr-mass-ratio))
+        sum (austern-radial-simpson-integrate-complex (double h) integrand)
+        pref (austern-radial-integral-prefactor-eq-5-5 (double M-A) (double M-B)
+              (double k-alpha) (double k-beta))]
+    (mul (complex-cartesian pref 0.0) sum)))
 
 (defn austern-radial-integral-I-Lb-La-eq-5-5
   "Radial integral **I_{L_β L_α}^{ℓsj}** from **N. Austern**, *Direct Nuclear Reaction Theories*,

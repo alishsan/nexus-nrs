@@ -55,12 +55,14 @@
       (-> resource
           (io/input-stream)
           (response)
-          (content-type "text/html"))
+          (content-type "text/html")
+          (assoc-in [:headers "Cache-Control"] "no-store"))
       file
       (-> file
           (io/input-stream)
           (response)
-          (content-type "text/html"))
+          (content-type "text/html")
+          (assoc-in [:headers "Cache-Control"] "no-store"))
       :else
       {:status 404 
        :body (str "index.html not found. Tried: " (pr-str file-paths))})))
@@ -214,7 +216,8 @@
     (-> resource
         (io/input-stream)
         (response)
-        (content-type (content-type-for resource-name)))
+        (content-type (content-type-for resource-name))
+        (assoc-in [:headers "Cache-Control"] "no-store"))
     {:status 404 :body "Not found" :headers {"Content-Type" "text/plain"}}))
 
 ;; ---------------------------
@@ -344,9 +347,13 @@
 (def ^:private default-energies [5.0 10.0 15.0 20.0 25.0])
 (def ^:private default-L-values [0 1 2 3 4 5])
 
-;; Elastic dσ/dΩ: always sum partial waves L = 0 … 39 (L < 40) for convergence / numerics;
-;; ignores the main form "L values" list (still used by phase shift / inelastic / transfer APIs).
-(def ^:private elastic-dsigma-L-values (vec (range 40)))
+;; Elastic dσ/dΩ API: **`differential-cross-section-nuclear-cut`** = **10 |f_C + f_N|²** mb/sr — **not**
+;; **`differential-cross-section`** (**|f_N|²** only), which made **dσ/σ_Rutherford** meaningless (~10⁴ spikes).
+;; Partial waves **L = 0 … requested `elastic_dsigma_L_max`** (clamped); the main-page **L_values** field is
+;; still only for phase shift / inelastic / transfer.
+(def ^:private elastic-dsigma-L-max-default 22)
+(def ^:private elastic-dsigma-L-max-hardcap 45)
+(def ^:private elastic-dsigma-L-min 8)
 
 (defn- ensure-energies-L [energies L-values]
   [(if (empty? energies) default-energies energies)
@@ -408,8 +415,12 @@
           L-values-raw (or (query-param req "L_values") (:L_values p))
           parsed-energies (parse-doubles energies-raw)
           parsed-L (parse-ints L-values-raw)
-          ;; L_values from form kept for response metadata only; dσ uses elastic-dsigma-L-values.
+          ;; L_values from form kept for response metadata only; elastic dσ uses **L_cut** = elastic_dsigma_L_max.
           [energies L-values] (ensure-energies-L parsed-energies parsed-L)
+          elastic-l-request (parse-int-default (:elastic_dsigma_L_max p) elastic-dsigma-L-max-default)
+          elastic-dsigma-L-max (min elastic-dsigma-L-max-hardcap
+                                   (max elastic-dsigma-L-min (long elastic-l-request)))
+          elastic-dsigma-L-values (vec (range (inc elastic-dsigma-L-max)))
           ws (ws-params-from p)
           ws-w (ws-w-params-from p)
           radius (parse-double-default (:radius p) 3.0)
@@ -433,11 +444,12 @@
           mu (/ (* proj-mass target-mass) (+ proj-mass target-mass))
           mass-factor-elastic (/ (* 2.0 mu) (* 197.327 197.327))
           z1z2ee (* proj-Z target-Z 1.44)
-          ;; E in the request is lab-frame projectile kinetic (MeV). functions/differential-cross-section
-          ;; expects CM kinetic energy — same convention as Rutherford ratio in the dashboard JS.
+          ;; E in the request is lab-frame projectile kinetic (MeV). Elastic **dσ** fns expect CM kinetic — same as
+          ;; Rutherford ratio in dashboard JS (`labToCmKineticMeV` / `e_cm_factor`).
           e-cm-factor (/ target-mass (+ proj-mass target-mass))
 ]
-      (let [dsigma-fn (or (resolve 'functions/differential-cross-section) (do (require 'functions) (resolve 'functions/differential-cross-section)))
+      (let [dsigma-fn (or (resolve 'functions/differential-cross-section-nuclear-cut)
+                          (do (require 'functions) (resolve 'functions/differential-cross-section-nuclear-cut)))
             elastic-data (for [E energies theta angles]
                            (let [e-cm (* E e-cm-factor)
                                  theta-rad (* theta (/ Math/PI 180.0))
@@ -445,7 +457,7 @@
                                                   (binding [phys/mass-factor mass-factor-elastic
                                                             phys/Z1Z2ee z1z2ee
                                                             phys/*elastic-imag-ws-params* ws-w]
-                                                    (dsigma-fn e-cm ws theta-rad elastic-dsigma-L-values))
+                                                    (dsigma-fn e-cm ws theta-rad elastic-dsigma-L-max))
                                                   0.0)
                                  dsigma-mb-sr (if (number? dsigma-complex) dsigma-complex (c/mag dsigma-complex))]
                              ;; :energy stays lab T_lab for plot labels / filter (matches form)
@@ -455,7 +467,9 @@
                           :parameters (merge {:energies energies
                                               :L_values L-values
                                               :elastic_dsigma_L_values elastic-dsigma-L-values
-                                              :elastic_dsigma_L_note "Elastic dσ/dΩ sums L = 0 … 39 (fixed); main form L list is for other tabs only."
+                                              :elastic_dsigma_model "differential-cross-section-nuclear-cut"
+                                              :elastic_dsigma_L_note "Elastic dσ/dΩ = 10|f_C+f_N|² (T&N); f_N sums L = 0 … elastic_dsigma_L_max. Point Coulomb ratio sanity: V0=R0=0 (a0>0 for matching radius) gives dσ/σ_Ruth = 1. For p + light targets with the default real WS, large-L Hankel matching can inflate f_N (try LMax=22 default; raise only with care—in particular forward angles often need more partial waves for a fully converged nuclear term)."
+                                              :elastic_dsigma_L_max elastic-dsigma-L-max
                                               :ws_params ws
                                               :radius radius
                                               :angles angles
@@ -466,7 +480,71 @@
                                              (when ws-w {:ws_w_params ws-w :complex_optical true}))}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
-(defn- handle-api-inelastic [req]
+(defn- li11-paper-inelastic-model?
+  [model-str]
+  (let [m (str/replace (str/lower-case model-str) #"[-_]" "")]
+    (contains? #{"li11paper1708" "li11" "tanaka2017" "paper1708"} m)))
+
+(defn- handle-api-inelastic-li11-paper
+  "¹¹Li **(p,p′)** benchmark (**Tanaka et al.**, arXiv:1708.07719): CM **dσ/dΩ** vs **θ_cm** at each **E_p,lab** (MeV)."
+  [p]
+  (try
+    (when-not (find-ns 'dwba.benchmark.li11-pp-paper1708)
+      (require 'dwba.benchmark.li11-pp-paper1708))
+    (let [curve-fn @(requiring-resolve 'dwba.benchmark.li11-pp-paper1708/li11-pp-angular-curve-paper-mb-sr)
+          projectile-str (str/trim (str (or (:projectile p) "p")))]
+      (if (not= projectile-str "p")
+        (response {:success false
+                   :error "Model li11_paper1708 is ¹¹Li(p,p′) at lab; projectile must be p."})
+        (let [energy-list (or (seq (parse-doubles (:energies p))) [6.0])
+              optical-raw (str/upper-case (str/trim (str (or (:li11_optical_set p) "V"))))
+              optical-set (if (= optical-raw "S") :S :V)
+              E-ex (parse-double-default (:E_ex p) 0.8)
+              beta-scale (parse-double-default (:li11_beta_scale p) 1.0)
+              L-max (long (max 4 (min 60 (parse-int-default (:li11_L_max p) 22))))
+              r-max (double (max 10.0 (min 80.0 (parse-double-default (:li11_r_max p) 45.0))))
+              h (double (max 0.005 (min 0.1 (parse-double-default (:li11_h p) 0.02))))
+              theta-step (double (max 1.0 (min 30.0 (parse-double-default (:li11_theta_step p) 5.0))))
+              transfer-ell (long (max 1 (min 5 (parse-int-default (:li11_transfer_ell p) 1))))
+              S-factor (parse-double-default (or (:li11_S p) (:transfer_S p)) 1.0)
+              angles (vec (range 5.0 180.0 theta-step))
+              inelastic-data
+              (vec
+               (for [E-i energy-list
+                     row  (curve-fn angles
+                                    :optical-set optical-set
+                                    :e-p-lab-mev (double E-i)
+                                    :e-ex-mev (double E-ex)
+                                    :r-max r-max
+                                    :h h
+                                    :L-max L-max
+                                    :beta-scale (double beta-scale)
+                                    :transfer-ell transfer-ell
+                                    :S-factor (double S-factor))]
+                 {:energy (double E-i)
+                  :angle (:theta-deg row)
+                  :differential_cross_section (double (:differential_cross_section_mb_sr row))
+                  :lambda transfer-ell
+                  :implementation "li11_paper1708"}))]
+          (response {:success true
+                     :data {:inelastic inelastic-data
+                            :parameters {:energies (vec energy-list)
+                                        :E_ex E-ex
+                                        :projectile "p"
+                                        :inelastic_model "li11_paper1708"
+                                        :li11_optical_set (name optical-set)
+                                        :li11_beta_scale beta-scale
+                                        :li11_L_max L-max
+                                        :li11_r_max r-max
+                                        :li11_h h
+                                        :li11_theta_step theta-step
+                                        :li11_transfer_ell transfer-ell
+                                        :li11_S S-factor
+                                        :note (str "Tanaka et al. (1708.07719): Table 1 optics Set " (name optical-set)
+                                                   "; θ_cm vs CM dσ/dΩ. E is proton lab kinetic (MeV).")}}}))))
+    (catch Exception e (response {:success false :error (.getMessage e)}))))
+
+(defn- handle-api-inelastic-standard [req]
   (try
     (when-not (find-ns 'dwba.inelastic) (require 'dwba.inelastic))
     (let [inel (or (resolve 'dwba.inelastic/distorted-wave-entrance) (do (require 'dwba.inelastic) (resolve 'dwba.inelastic/distorted-wave-entrance)))
@@ -508,24 +586,53 @@
           inelastic-dsigma-fn (or (resolve 'dwba.inelastic/inelastic-differential-cross-section) (do (require 'dwba.inelastic) (resolve 'dwba.inelastic/inelastic-differential-cross-section)))
           angular-factor (* 4.0 Math/PI)
           zero-complex (c/complex-cartesian 0.0 0.0)
+          ;; Charged **p**, **d**, **α**: explicit **ws** + Coulomb (`dwba.inelastic` WS+Coulomb branch); **n**: neutral **solve-numerov**; **nil** **ws** → global CH89/Daehnick.
+          charged-inelastic? (#{:p :d :alpha} projectile-type)
           entrance-wave (fn [E-i L-i]
-                          (inel E-i L-i nil h r-max
-                                :projectile-type projectile-type
-                                :target-A target-A
-                                :target-Z target-Z
-                                :E-lab E-i
-                                :s spin
-                                :j (+ L-i spin)
-                                :mass-factor mass-factor))
+                          (cond
+                            (and ws charged-inelastic?)
+                            (inel E-i L-i ws h r-max
+                                  :projectile-type projectile-type
+                                  :target-A target-A
+                                  :target-Z target-Z
+                                  :E-lab E-i
+                                  :s spin
+                                  :j (+ L-i spin)
+                                  :mass-factor mass-factor)
+                            ws
+                            (inel E-i L-i ws h r-max)
+                            :else
+                            (inel E-i L-i nil h r-max
+                                  :projectile-type projectile-type
+                                  :target-A target-A
+                                  :target-Z target-Z
+                                  :E-lab E-i
+                                  :s spin
+                                  :j (+ L-i spin)
+                                  :mass-factor mass-factor)))
           exit-wave (fn [E-i L-i]
-                      (inel-exit E-i E-ex L-i nil h r-max
-                                 :outgoing-type projectile-type
-                                 :residual-A target-A
-                                 :residual-Z target-Z
-                                 :E-lab (max 0.001 (- E-i E-ex))
-                                 :s spin
-                                 :j (+ L-i spin)
-                                 :mass-factor mass-factor))]
+                      (let [E-lab-ex (max 0.001 (- E-i E-ex))]
+                        (cond
+                          (and ws charged-inelastic?)
+                          (inel-exit E-i E-ex L-i ws h r-max
+                                     :outgoing-type projectile-type
+                                     :residual-A target-A
+                                     :residual-Z target-Z
+                                     :E-lab E-lab-ex
+                                     :s spin
+                                     :j (+ L-i spin)
+                                     :mass-factor mass-factor)
+                          ws
+                          (inel-exit E-i E-ex L-i ws h r-max)
+                          :else
+                          (inel-exit E-i E-ex L-i nil h r-max
+                                     :outgoing-type projectile-type
+                                     :residual-A target-A
+                                     :residual-Z target-Z
+                                     :E-lab E-lab-ex
+                                     :s spin
+                                     :j (+ L-i spin)
+                                     :mass-factor mass-factor))))]
         (let [inelastic-data (for [lambda lambdas
                                   E-i    energies]
                                (try
@@ -555,6 +662,13 @@
                                                                                   :projectile projectile-str :inelastic_target target-str}}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
+(defn- handle-api-inelastic [req]
+  (let [p (params req)
+        model-raw (str/trim (str (or (:inelastic_model p) "")))]
+    (if (li11-paper-inelastic-model? model-raw)
+      (handle-api-inelastic-li11-paper p)
+      (handle-api-inelastic-standard req))))
+
 (defn- transfer-data-16o-dp
   "Cross table **{:energy :angle :differential_cross_section}** for **¹⁶O(d,p)** at each lab **E(d)** (MeV)."
   [energies angles-deg h r-max L-max S-factor]
@@ -573,7 +687,10 @@
               :angle (double theta-deg)
               :differential_cross_section (double s)})))))
 
-(defn- handle-api-transfer [req]
+(defn- handle-api-transfer
+  "Transfer tab **POST**. **d-p:** `o16-dp-handbook` benchmark. **p-d:** `GET /api/transfer-default` matches
+  `examples/example_16Opd.clj`; **POST** **p-d** is schematic zero-range (see response `:implementation`)."
+  [req]
   (try
     (let [p (params req)
           target-str (str/trim (str (or (:target p) "16O")))
@@ -684,8 +801,12 @@
     (GET "/api/health" [] (response {:status "ok" :message "DWBA Web Dashboard API"}))
     (GET "/api/parameters" [] (response {:default_parameters {:energies [5.0 10.0 15.0 20.0 25.0] :L_values [0 1 2 3 4 5]
                                                                :V0 40.0 :R0 2.0 :a0 0.6 :radius 3.0
+                                                               :elastic_dsigma_L_max elastic-dsigma-L-max-default
                                                                :W0 0.0 :R_W 2.0 :a_W 0.6
                                                                :E_ex 4.44 :lambda 2 :beta 0.25 :reaction_type "p-d"
+                                                               :inelastic_model "standard"
+                                                               :li11_optical_set "V" :li11_beta_scale 1.0 :li11_L_max 22
+                                                               :li11_r_max 45.0 :li11_h 0.02 :li11_theta_step 5.0 :li11_transfer_ell 1
                                                                :transfer_S 1.0 :transfer_partial_L 1 :transfer_l_i 1 :transfer_l_f 0
                                                                :transfer_r_max 20.0 :transfer_h 0.01
                                                                :transfer_W0 0.0 :transfer_RW 2.0 :transfer_aW 0.6}

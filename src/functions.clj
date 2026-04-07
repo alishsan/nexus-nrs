@@ -8,8 +8,17 @@
    [fastmath.vector :as v]
    [dwba.finite-well :as fw :refer [j-l k-l j-l-deriv k-l-deriv j-ratio k-ratio
                                      finite-well-matching-error solver-step
-                                     find-bound-state-finite-well find-discontinuities
-                                     find-all-bound-states]]
+                                     find-bound-state-finite-well find-bound-state-finite-well-nlz
+                                     find-bound-state-finite-well-nlz-delta-so
+                                     find-bound-state-finite-well-nlz-delta-so-over-v0
+                                     find-discontinuities
+                                     find-all-bound-states
+                                     l-dot-s-spin-half
+                                     delta-surface-thomas-so-shift-over-v0
+                                     delta-surface-thomas-so-shift-MeV
+                                     finite-well-delta-so-splitting-j-doublet-over-v0
+                                     finite-well-delta-so-splitting-j-doublet-MeV
+                                     lambda-pi-squared-fm2-default]]
 ))
 
 (declare f-func f-func-deriv g-func g-func-deriv hankel0+ hankel0- phase-shift0)
@@ -1156,6 +1165,10 @@ precision 0.00001]
   "Elastic **f_N(θ)** (**fm**) — Thompson–Nunes **(3.1.88)** nuclear part, sum **L = 0 … L_cut**.
   Each term is **−i/k · (2L+1) P_L(cos θ) · e^{2iσ_L}(S_L^n − 1)** with **S_L^n = `s-matrix`** (**(3.1.84)**).
   When **S_L^n = 1**, **f_N = 0**.
+
+  **Numerics:** for charged projectiles on light targets, **S^n** from Coulomb–Hankel matching can grow the sum
+  erratically past moderate **L_cut**; treat **L_cut** as a convergence knob (dashboard default 22) until high‑**L**
+  matching is hardened.
 
   Analytic **f_C** is **not** included — add **`coulomb-scattering-amplitude-thompson-nunes-eq-3181`** for **f_C + f_N**."
   [E-cm ws-params theta-cm L-cut]

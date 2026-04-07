@@ -345,7 +345,7 @@
                         <p class="text-muted small mb-2">
                             Computes single-channel elastic scattering for a chosen projectile + target, using the Woods–Saxon parameters above
                             as the effective optical potential for that system.
-                            Elastic dσ/dΩ always sums partial waves <strong>L = 0 … 39</strong> (distorted-wave <em>L</em> &lt; 40) for a converged sum; the main <strong>Angular momenta</strong> field applies to <em>phase shift / R-matrix / inelastic</em> only. The <strong>Transfer</strong> tab uses orbital <strong>ℓ</strong> for coupling and amplitude maps, not entrance-channel partial waves.
+                            Elastic dσ sums nuclear partial waves <strong>L = 0 … L<sub>max</sub></strong> (see below—default 22). Large <em>L</em><sub>max</sub> with a strong real well plus Coulomb can inflate <strong>f<sub>N</sub></strong> numerically (e.g. p+¹⁶O dσ/σ<sub>Ruth</sub> ≫ 10³); use <strong>V0=R0=0</strong> to verify ratio ≡ 1. The main <strong>Angular momenta</strong> field is for <em>phase shift / R-matrix / inelastic</em> only.
                         </p>
                         <div class="row mb-3">
                             <div class="col-md-4">
@@ -403,13 +403,23 @@
                                     <input type="number" class="form-control" id="elastic_aW" min="0.1" max="2" value="0.6" step="0.1">
                                 </div>
                             </div>
+                            <div class="col-md-4">
+                                <div class="parameter-group">
+                                    <label for="elastic_dsigma_L_max">Max L for elastic dσ</label>
+                                    <input type="number" class="form-control" id="elastic_dsigma_L_max" min="8" max="45" value="22" step="1" title="Partial-wave cutoff for 10|f_C+f_N|²; lower often reduces p+light-target artefacts">
+                                    <small class="text-muted">8–45; default 22</small>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="form-check mt-2 mb-2">
                         <input type="checkbox" class="form-check-input" id="elastic_ratio_rutherford" checked>
                         <label class="form-check-label" for="elastic_ratio_rutherford">
-                            Plot <strong>dσ/dΩ / σ<sub>Rutherford</sub></strong> (uncheck for <strong>mb/sr</strong>)
+                            Plot <strong>dσ/dΩ / σ<sub>Rutherford</sub></strong> (point Coulomb CM; uncheck for <strong>mb/sr</strong>)
                         </label>
+                        <p class="text-muted small mt-1 mb-0">
+                            Ratio uses point Rutherford in the CM frame. <strong>Sanity:</strong> Coulomb-only (V0=R0=0, a0&gt;0) ⇒ ratio 1. With the tutorial well (V0=40), raising “Max L” can explode dσ/σ<sub>Ruth</sub> at some angles—raise L only if you need a more converged forward nuclear term.
+                        </p>
                     </div>
                     <div class="mb-3">
                         <button class="btn btn-calculate" id="calculate-elastic-btn" type="button">
@@ -427,6 +437,67 @@
                     <div class="control-panel mb-3">
                         <h4><i class="fas fa-exchange-alt"></i> Inelastic Scattering Parameters</h4>
                         <p class="text-muted small mb-2">Projectile + target define the reaction (e.g. p + ¹²C). Target sets typical E_ex and β (λ=2). Woods-Saxon V₀, R₀, a₀ are shared with Elastic.</p>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="inelastic_model">Model</label>
+                                    <select class="form-select" id="inelastic_model">
+                                        <option value="standard" selected>Standard — macroscopic (p,p′) DWBA (main panel L, λ, β)</option>
+                                        <option value="li11_paper1708">¹¹Li (p,p′) — Tanaka et al. (1708.07719), Table 1 optics</option>
+                                        <option value="tanaka2017">Same as above (alias: Tanaka 2017 / arXiv:1708.07719)</option>
+                                    </select>
+                                    <small class="text-muted">Paper mode uses <strong>Energy range</strong> as proton lab T (MeV), e.g. <code>6</code> or <code>5,6,7</code>. Requires projectile <strong>p</strong>.</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row border rounded p-3 mb-3 bg-light" id="li11_paper_options" style="display: none;">
+                            <div class="col-12"><strong class="small">Paper 1708 — optional knobs</strong></div>
+                            <div class="col-md-4">
+                                <div class="parameter-group">
+                                    <label for="li11_optical_set">Optical set</label>
+                                    <select class="form-select" id="li11_optical_set">
+                                        <option value="V" selected>Set V (volume imaginary)</option>
+                                        <option value="S">Set S (surface imaginary)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="parameter-group">
+                                    <label for="li11_beta_scale">β scale (strength)</label>
+                                    <input type="number" class="form-control" id="li11_beta_scale" value="1" step="0.05" min="0">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="parameter-group">
+                                    <label for="li11_transfer_ell">Transfer multipole ℓ (paper dipole = 1)</label>
+                                    <input type="number" class="form-control" id="li11_transfer_ell" value="1" step="1" min="1" max="5">
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="parameter-group">
+                                    <label for="li11_L_max">Radial L_max</label>
+                                    <input type="number" class="form-control" id="li11_L_max" value="22" step="1" min="4" max="60">
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="parameter-group">
+                                    <label for="li11_r_max">r_max (fm)</label>
+                                    <input type="number" class="form-control" id="li11_r_max" value="45" step="1" min="10" max="80">
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="parameter-group">
+                                    <label for="li11_h">Radial step h</label>
+                                    <input type="number" class="form-control" id="li11_h" value="0.02" step="0.005" min="0.005" max="0.1">
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="parameter-group">
+                                    <label for="li11_theta_step">θ_cm step (deg)</label>
+                                    <input type="number" class="form-control" id="li11_theta_step" value="5" step="1" min="1" max="30">
+                                </div>
+                            </div>
+                        </div>
                         <div class="row">
                             <div class="col-md-4">
                                 <div class="parameter-group">

@@ -2,6 +2,8 @@
 
 Interactive web dashboard for Distorted Wave Born Approximation (DWBA) nuclear physics calculations.
 
+**Production:** https://www.nexus-nrs.uz (served with API on the same origin).
+
 ## Features
 
 ### 🚀 **Interactive Calculations**

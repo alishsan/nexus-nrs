@@ -5,22 +5,39 @@
    - Spherical Bessel functions (j-l, k-l) and their derivatives
    - Matching condition calculations
    - Finding bound state energies using Newton-Raphson method
-   - Finding all bound states for a given well depth"
+   - Finding all bound states for a given well depth
+   - Selecting the **n**-th partial-wave state via **`find-bound-state-finite-well-nlz`**
+   - First-order **Thomas spin–orbit** in the **sharp-surface** limit
+     (**a_Woods–Saxon → 0** → **δ(r − R₀)**): **`delta-surface-thomas-so-shift-over-v0`** (**ΔE_so / V₀**,
+     dimensionless) and **`delta-surface-thomas-so-shift-MeV`**, plus doublet splits and **nlz** helpers."
   (:require [fastmath.core :as m]))
 
+(def ^:const lambda-pi-squared-fm2-default
+  "Pion Compton **λ_π²** (**fm²**) for δ-surface SO estimate; ~(ℏ/(m_π c))² ≈ 2.0."
+  2.0)
+
 ;; --- Spherical Bessel Function Approximations for low L (finite well) ---
+
+(defn- j-l-double-fact-odd-denom
+  "Denominator **(2l+1)!!** in **j_l(x) ∼ x^l / (2l+1)!!** as **x → 0**."
+  [l]
+  (reduce * 1 (range 1 (+ 2 (* 2 l)) 2)))
 
 (defn j-l [l x]
   "Spherical Bessel function j_l(x) using recurrence relations.
    More efficient for low l values than general implementations."
-  (case l
-    -1 (/ (m/cos x) x)
-    0  (/ (m/sin x) x)
-    1  (- (/ (m/sin x) (* x x)) (/ (m/cos x) x))
-    ;; General recurrence: j_{l} = ((2l-1)/x)j_{l-1} - j_{l-2}
-    (let [j-m2 (j-l (- l 2) x)
-          j-m1 (j-l (- l 1) x)]
-      (- (* (/ (dec (* 2 l)) x) j-m1) j-m2))))
+  (let [x (double x)]
+    (case l
+      -1 (/ (m/cos x) x)
+      (if (and (>= l 0) (< (m/abs x) 1.0e-14))
+        (/ (m/pow x l) (double (j-l-double-fact-odd-denom l)))
+        (case l
+          0  (/ (m/sin x) x)
+          1  (- (/ (m/sin x) (* x x)) (/ (m/cos x) x))
+          ;; General recurrence: j_{l} = ((2l-1)/x)j_{l-1} - j_{l-2}
+          (let [j-m2 (j-l (- l 2) x)
+                j-m1 (j-l (- l 1) x)]
+            (- (* (/ (dec (* 2 l)) x) j-m1) j-m2)))))))
 
 (defn k-l [l x]
   "Modified Spherical Bessel function k_l(x) for bound states.
@@ -203,115 +220,43 @@
                     (+ (* d-left-dxi dxi-de) (* d-right-deta deta-de)))]  ; d-right-deta is correct for l>0
       {:f f-val :f-prime f-prime})))
 
-(defn find-bound-state-finite-well [l z0]
-  "Finds bound state energies for a finite square well using Newton-Raphson method.
-   
-   Parameters:
-   - l: Orbital angular momentum quantum number
-   - z0: Dimensionless well depth parameter z0 = a * sqrt(2mV0)/hbar
-         where a is the well radius and V0 is the well depth
-   
-   Returns: {:e-ratio, :xi, :eta, :energy, :converged?, :matching-error, :iterations}
-   - e-ratio: |E|/V0 (dimensionless energy ratio, 0 < e-ratio < 1)
-     NOTE: The actual bound state energy is E = -V0 * e-ratio (negative)
-   - xi: ka = z0 * sqrt(1 - e_ratio) (dimensionless wave number inside well)
-   - eta: kappa*a = z0 * sqrt(e_ratio) (dimensionless decay parameter outside well)
-   - energy: e-ratio (same as e-ratio, for convenience - this is the RATIO, not the physical energy)
-   - converged?: Whether Newton-Raphson converged AND matching error is small
-   - matching-error: The error in the matching condition (should be ~0 for a true bound state)
-   - iterations: Number of iterations used
-   
-   The relationship between xi and eta is: xi^2 + eta^2 = z0^2
-   This comes from: k^2 = 2m(E+V0)/hbar^2 and kappa^2 = 2m|E|/hbar^2
-   so: (ka)^2 + (kappa*a)^2 = (2mV0/hbar^2) * a^2 = z0^2
-   
-   Uses Newton-Raphson method with analytical derivatives for faster convergence.
-   NOTE: This finds ONE bound state. For multiple bound states, scan the energy range
-   or use find-all-bound-states."
-  (let [tolerance 1e-9
-        max-iters 50  ; Increased iterations
-        ;; For z0 > π/2, bound states exist. Use a better initial guess.
-        ;; For shallow wells (z0 < π), bound states are typically in the middle range
-        ;; For deep wells, bound states can be anywhere
-        ;; Try a few initial guesses and pick the one closest to a root
-        initial-guess (if (> z0 Math/PI)
-                        0.5  ; Deep well - start in middle
-                        ;; For shallow wells, scan for minimum |f| using pipeline
-                        (let [valid-results (->> (range 0.1 0.99 0.001)  ; Fine grid like test script (0.001 step)
-                                                 (map (fn [e-ratio]
-                                                        (let [{:keys [f]} (solver-step e-ratio l z0)]
-                                                          (when (not (Double/isNaN f))
-                                                            {:e-ratio e-ratio 
-                                                             :f f
-                                                             :abs-f (m/abs f)}))))
-                                                 (filter some?))]
-                          (if (seq valid-results)
-                            (:e-ratio (apply min-key :abs-f valid-results))
-                            0.5)))]  ; Fallback to middle
-    ;; Use tail recursion with loop/recur for better stack safety
-    (loop [e-ratio initial-guess
-           iters 0
-           prev-f-val nil
-           prev-e-ratio nil]
-      ;; Safety check: always terminate if max iterations reached
-      (if (>= iters max-iters)
-        (let [xi (* z0 (m/sqrt (- 1 e-ratio)))
-              eta (* z0 (m/sqrt e-ratio))
-              final-error (finite-well-matching-error xi eta l)]
-          {:e-ratio e-ratio
-           :xi xi
-           :eta eta
-           :energy e-ratio
-           :converged? false
-           :matching-error final-error
-           :iterations iters})
-        (let [{:keys [f f-prime]} (solver-step e-ratio l z0)
-              ;; Check if we're making progress
-              f-abs (m/abs f)
-              ;; Avoid division by zero or very small derivatives
-              next-e (if (or (< (m/abs f-prime) 1e-15)
-                            (Double/isNaN f-prime)
-                            (Double/isInfinite f-prime))
-                       ;; If derivative is problematic, use a small step toward zero
-                       (let [step-size (min 0.01 (* 0.001 f-abs))]
-                         (+ e-ratio (* step-size (- (m/signum f)))))
-                       ;; Normal Newton-Raphson step: x_{n+1} = x_n - f(x_n) / f'(x_n)
-                       (let [step (/ f f-prime)
-                             ;; Limit step size to avoid overshooting, but allow small steps near root
-                             ;; For very small function values, allow larger relative steps
-                             max-step-size (if (< f-abs 1e-3)
-                                           0.1  ; Allow larger steps when close to root
-                                           0.5) ; Normal limit
-                             limited-step (if (> (m/abs step) max-step-size)
-                                           (* max-step-size (m/signum step))
-                                           step)]
-                         (- e-ratio limited-step)))
-              ;; Clamp to valid range, but avoid getting stuck at boundaries
-              next-e (max 0.01 (min 0.99 next-e))  ; Wider range to avoid boundary issues
-              ;; Check if we hit a boundary and function value is still large
-              at-boundary? (or (<= next-e 0.01) (>= next-e 0.99))
-              ;; Check convergence: both position and function value
-              converged-pos? (< (m/abs (- next-e e-ratio)) tolerance)
-              converged-func? (< f-abs 1e-6)
-              converged? (and converged-pos? converged-func?)
-              ;; Check if we're stuck (not making progress in function value)
-              stuck-func? (and prev-f-val (< (m/abs (- f-abs (m/abs prev-f-val))) 1e-12))
-              ;; Check if we're oscillating (position not changing significantly)
-              stuck-pos? (and prev-e-ratio (< (m/abs (- next-e prev-e-ratio)) 1e-12))
-              ;; Check if we're stuck at boundary with large function value
-              stuck-at-boundary? (and at-boundary? (> f-abs 0.1))]
-          (if (or converged? stuck-func? stuck-pos? stuck-at-boundary?)
-            (let [xi (* z0 (m/sqrt (- 1 next-e)))
-                  eta (* z0 (m/sqrt next-e))
-                  final-error (finite-well-matching-error xi eta l)]
-              {:e-ratio next-e
-               :xi xi
-               :eta eta
-               :energy next-e
-               :converged? (and converged? (< (m/abs final-error) 1e-6))
-               :matching-error final-error
-               :iterations (inc iters)})
-            (recur next-e (inc iters) f-abs e-ratio)))))))
+(defn- j-l-zero-in-xi-bracket
+  "Bisection locate **ξ** in **(ξ-lo, ξ-hi)** with **j_l(ξ)=0** (**l ≥ 1**)."
+  [l ^double xi-lo ^double xi-hi]
+  (when (and (pos? l) (< xi-lo xi-hi))
+    (let [fl (j-l l xi-lo)
+          fh (j-l l xi-hi)]
+      (when (and (not (Double/isNaN fl)) (not (Double/isNaN fh))
+                 (< (* fl fh) 0.0))
+        (loop [a xi-lo fa fl b xi-hi fb fh n 0]
+          (if (>= n 72)
+            (* 0.5 (+ a b))
+            (let [m (* 0.5 (+ a b))
+                  fm (j-l l m)]
+              (if (< (m/abs fm) 1e-14)
+                m
+                (if (<= (* fa fm) 0.0)
+                  (recur a fa m fm (inc n))
+                  (recur m fm b fb (inc n)))))))))))
+
+(defn- e-ratios-at-j-l-xi-poles
+  "**e = |E|/V₀** where **ξ = z₀√(1−e)** hits a zero of **j_l** (denominator of **j_{l-1}/j_l**)."
+  [l z0]
+  (when (pos? l)
+    (let [z (double z0)
+          step 0.04]
+      (loop [xa 0.02
+             acc []]
+        (if (>= xa z)
+          (->> acc (filter some?) distinct sort vec)
+          (let [xb (min z (+ xa step))]
+            (recur xb
+                   (if-let [xi0 (j-l-zero-in-xi-bracket l xa xb)]
+                     (let [e (- 1.0 (/ (* xi0 xi0) (* z z)))]
+                       (if (and (> e 0.01) (< e 0.99))
+                         (conj acc e)
+                         acc))
+                     acc))))))))
 
 (defn find-discontinuities [l z0]
   "Finds analytical discontinuities in the matching error function.
@@ -324,24 +269,21 @@
    1 - e_ratio = (n*π/z0)^2
    e_ratio = 1 - (n*π/z0)^2
    
-   For l>0: Discontinuities occur at zeros of j_l(xi), which are more complex.
-   For now, we'll use numerical detection for l>0.
+   For **l > 0**, includes **e** where **j_l(ξ)=0** (poles of **j_{l-1}/j_l**).
    
    Returns: Vector of e-ratio values where discontinuities occur, sorted."
   (if (zero? l)
-    ;; For l=0, calculate analytically
-    (let [max-n (int (/ z0 Math/PI))  ; Only consider n such that n*π < z0
+    (let [max-n (int (/ z0 Math/PI))
           discontinuities (for [n (range 1 (inc max-n))
                                 :let [n-pi-over-z0 (/ (* n Math/PI) z0)
-                                      e-ratio (- 1.0 (* n-pi-over-z0 n-pi-over-z0))]]  ; e_ratio = 1 - (n*π/z0)^2
+                                      e-ratio (- 1.0 (* n-pi-over-z0 n-pi-over-z0))]]
                             (when (and (> e-ratio 0.01) (< e-ratio 0.99))
                               e-ratio))]
       (->> discontinuities
            (filter some?)
-           (sort)
-           (vec)))
-    ;; For l>0, return empty (use numerical detection)
-    []))
+           sort
+           vec))
+    (e-ratios-at-j-l-xi-poles l z0)))
 
 (defn scan-energy-range-dimensionless [l z0 step-size]
   "Scans the energy range and returns function values.
@@ -383,7 +325,7 @@
                        e2 (:e-ratio next)
                        e-mid (/ (+ e1 e2) 2.0)
                        near-disc? (some (fn [disc-e]
-                                          (< (m/abs (- e-mid disc-e)) 0.01))
+                                          (< (m/abs (- e-mid disc-e)) 0.02))
                                         all-disc-e-ratios)
                        is-sign-change? (and (not (zero? s1))
                                             (not (zero? s2))
@@ -413,86 +355,79 @@
                       :f2 (:f curr)})))))
        (vec)))
 
+(defn- bisect-matching-error-root
+  "**e = |E|/V₀** with **f(e)=0**, given **f(e-lo) f(e-hi) ≤ 0**."
+  [e-lo e-hi l z0]
+  (let [f-lo (:f (solver-step e-lo l z0))
+        f-hi (:f (solver-step e-hi l z0))]
+    (when (and (not (Double/isNaN f-lo)) (not (Double/isNaN f-hi))
+               (<= (* (double f-lo) (double f-hi)) 0.0))
+      (loop [a (double e-lo) fa f-lo b (double e-hi) fb f-hi n 0]
+        (let [m (* 0.5 (+ a b))
+              fm (:f (solver-step m l z0))
+              tol 1e-14]
+          (cond
+            (>= n 96) [m (inc n)]
+            (or (Double/isNaN fm) (Double/isInfinite fm))
+            [(* 0.5 (+ a b)) (inc n)]
+            (< (m/abs fm) tol) [m (inc n)]
+            (<= (* fa fm) 0.0) (recur a fa m fm (inc n))
+            :else (recur m fm b fb (inc n))))))))
+
+(defn- newton-polish-matching-e
+  "A few guarded Newton steps from **e0** when bisection did not apply."
+  [e0 l z0 max-steps]
+  (loop [e-ratio (double e0) k 0]
+    (if (>= k (long max-steps))
+      [e-ratio k]
+      (let [{:keys [f f-prime]} (solver-step e-ratio l z0)
+            ok? (and (not (Double/isNaN f)) (not (Double/isInfinite f))
+                     (not (Double/isNaN f-prime)) (not (Double/isInfinite f-prime))
+                     (> (m/abs f-prime) 1e-15))
+            f-abs (m/abs f)]
+        (if (and ok? (< f-abs 1e-12))
+          [e-ratio (inc k)]
+          (if-not ok?
+            [e-ratio k]
+            (let [step (min 0.2 (max -0.2 (/ f f-prime)))
+                  e2 (max 0.01 (min 0.99 (- e-ratio step)))]
+              (recur e2 (inc k)))))))))
+
 (defn refine-root [candidate l z0]
-  "Refines a root candidate using Newton-Raphson method.
-   
-   Parameters:
-   - candidate: {:e1, :e2, :f1, :f2} - bracket for the root
-   - l: Orbital angular momentum quantum number
-   - z0: Dimensionless well depth parameter
-   
-   Returns: Bound state map with {:e-ratio, :xi, :eta, :energy, :converged?, :matching-error, :iterations}"
-  (let [{:keys [e1 e2]} candidate
-        initial-guess (/ (+ e1 e2) 2.0)
-        tolerance 1e-9
-        max-iters 50
-        bracket-low e1
-        bracket-high e2]
-    (loop [e-ratio initial-guess
-           iters 0
-           prev-f-val nil
-           prev-e-ratio nil
-           low bracket-low
-           high bracket-high]
-      (if (>= iters max-iters)
-        (let [xi (* z0 (m/sqrt (- 1 e-ratio)))
-              eta (* z0 (m/sqrt e-ratio))
-              final-error (finite-well-matching-error xi eta l)]
-          {:e-ratio e-ratio
-           :xi xi
-           :eta eta
-           :energy e-ratio
-           :converged? false
-           :matching-error final-error
-           :iterations iters})
-        (let [{:keys [f f-prime]} (solver-step e-ratio l z0)
-              f-valid? (and (not (Double/isNaN f))
-                           (not (Double/isInfinite f))
-                           (not (Double/isNaN f-prime))
-                           (not (Double/isInfinite f-prime)))
-              f-abs (if f-valid? (m/abs f) Double/MAX_VALUE)
-              next-e (if (or (not f-valid?)
-                            (< (m/abs f-prime) 1e-15)
-                            (> f-abs 1e6))
-                      (let [step-size (* 0.5 (m/abs (- high low)))]
-                        (if (> f 0)
-                          (- e-ratio step-size)
-                          (+ e-ratio step-size)))
-                      (let [step (/ f f-prime)
-                            max-step-size (if (< f-abs 1e-3) 0.1 0.5)
-                            limited-step (if (> (m/abs step) max-step-size)
-                                          (* max-step-size (m/signum step))
-                                          step)]
-                        (- e-ratio limited-step)))
-              next-e (max (max 0.01 low) (min 0.99 (min high next-e)))
-              [new-low new-high] (if f-valid?
-                                  (if (> f 0)
-                                    [low e-ratio]
-                                    [e-ratio high])
-                                  [low high])
-              converged-pos? (< (m/abs (- next-e e-ratio)) tolerance)
-              converged-func? (< f-abs 1e-6)
-              converged? (and converged-pos? converged-func?)
-              stuck-func? (and (>= iters 3)
-                              prev-f-val
-                              (< (m/abs (- f-abs (m/abs prev-f-val))) 1e-12))
-              stuck-pos? (and (>= iters 3)
-                            prev-e-ratio
-                            (< (m/abs (- next-e prev-e-ratio)) 1e-12))
-              at-boundary? (or (<= next-e 0.01) (>= next-e 0.99))
-              stuck-at-boundary? (and at-boundary? (> f-abs 0.1))]
-          (if (or converged? stuck-func? stuck-pos? stuck-at-boundary?)
-            (let [xi (* z0 (m/sqrt (- 1 next-e)))
-                  eta (* z0 (m/sqrt e-ratio))
-                  final-error (finite-well-matching-error xi eta l)]
-              {:e-ratio next-e
-               :xi xi
-               :eta eta
-               :energy next-e
-               :converged? (and converged? (< (m/abs final-error) 1e-6))
-               :matching-error final-error
-               :iterations (inc iters)})
-            (recur next-e (inc iters) f-abs e-ratio new-low new-high)))))))
+  "Refines **f(e)=0** using **bisection** on the scan bracket when possible, else midpoint **+**
+   a short Newton polish. Newton alone was fragile when **f′** and early-exit **stuck?** logic
+   stopped before **|f|** was small."
+  (let [{:keys [e1 e2 f1 f2]} candidate
+        f1v (double (if (some? f1) f1 (:f (solver-step e1 l z0))))
+        f2v (double (if (some? f2) f2 (:f (solver-step e2 l z0))))
+        e-mid (* 0.5 (+ (double e1) (double e2)))]
+    (if-let [[e-bis iters-b]
+             (when (and (not (Double/isNaN f1v)) (not (Double/isNaN f2v))
+                        (<= (* f1v f2v) 0.0))
+               (bisect-matching-error-root e1 e2 l z0))]
+      (let [e0 (double e-bis)
+            [e-nw iters-n] (newton-polish-matching-e e0 l z0 12)
+            xi (* z0 (m/sqrt (- 1.0 e-nw)))
+            eta (* z0 (m/sqrt e-nw))
+            ferr (finite-well-matching-error xi eta l)]
+        {:e-ratio e-nw
+         :xi xi
+         :eta eta
+         :energy e-nw
+         :converged? (< (m/abs ferr) 1e-6)
+         :matching-error ferr
+         :iterations (+ iters-b iters-n)})
+      (let [[e-nw iters-n] (newton-polish-matching-e e-mid l z0 40)
+            xi (* z0 (m/sqrt (- 1.0 e-nw)))
+            eta (* z0 (m/sqrt e-nw))
+            ferr (finite-well-matching-error xi eta l)]
+        {:e-ratio e-nw
+         :xi xi
+         :eta eta
+         :energy e-nw
+         :converged? (< (m/abs ferr) 1e-6)
+         :matching-error ferr
+         :iterations iters-n}))))
 
 (defn deduplicate-states [states min-separation]
   "Removes duplicate states that are too close to each other.
@@ -525,7 +460,7 @@
    Returns: Vector of bound states, each with {:e-ratio, :xi, :eta, :energy, :converged?, :matching-error, :iterations}
    sorted by e-ratio (lowest energy first).
    
-   Uses a fine grid scan to find sign changes, then refines each root using Newton-Raphson."
+   Uses a fine grid scan to find sign changes, then refines brackets with **bisection** and a short Newton polish."
   (let [;; Find analytical discontinuities first
         analytical-discs (find-discontinuities l z0)
         ;; Scan energy range
@@ -548,3 +483,200 @@
         deduplicated (deduplicate-states sorted-states 0.001)]
     deduplicated))
 
+(defn- valid-finite-well-state?
+  "Filter predicate: converged root with small matching error and physical e-ratio."
+  [state tolerance]
+  (and (:converged? state)
+       (< (m/abs (:matching-error state)) tolerance)
+       (>= (:e-ratio state) 0.01)
+       (<= (:e-ratio state) 0.99)))
+
+(defn find-bound-state-finite-well-nlz
+  "Return the **n**-th bound state (1-based) for partial wave **l** and dimensionless depth **z0**.
+
+   **n** is the spectroscopic index **for fixed l**: **n = 1** is the **most bound** state (largest
+   **e-ratio** = |E|/V₀), **n = 2** is the first excited state in that partial wave, etc.
+
+   Implementation: **`find-all-bound-states`**, then keep well-converged roots, sort by **e-ratio**
+   **descending**, and take the **n**-th entry.
+
+   Returns the same keys as **`find-bound-state-finite-well`** plus **:n**, **:l**, **:z0**.
+   Returns **nil** if **n** is not a positive integer or exceeds the number of physical states.
+
+   **z0** is the same dimensionless depth as elsewhere: **z0 = a √(2mV₀)/ℏ**."
+  [n l z0]
+  (when (pos-int? n)
+    (let [all (find-all-bound-states l z0)
+          valid (->> all
+                     (filter #(valid-finite-well-state? % 1e-3))
+                     (sort-by :e-ratio)
+                     reverse
+                     vec)]
+      (when (<= n (count valid))
+        (merge (nth valid (dec n))
+               {:n n :l l :z0 z0})))))
+
+(defn find-bound-state-finite-well [l z0]
+  "Most bound state for partial wave **l** (**n = 1** in **`find-bound-state-finite-well-nlz`**).
+
+   Returns **{:e-ratio, :xi, :eta, :energy, :converged?, :matching-error, :iterations}**;
+   for multiple roots use **`find-all-bound-states`** or **`find-bound-state-finite-well-nlz`** with **n ≥ 2**."
+  (when-let [st (find-bound-state-finite-well-nlz 1 l z0)]
+    (dissoc st :n :l :z0)))
+
+;; --- Sharp-surface (δ) Thomas spin–orbit first-order shift ---------------------------------
+
+(defn l-dot-s-spin-half
+  "Expectation **⟨l·s⟩** for spin **½**: **(j(j+1) − l(l+1) − 3/4)/2**.
+
+   Same convention as **`dwba.transfer/l-dot-s-nucleon`** (this ns cannot require **transfer**)."
+  [l j]
+  (/ (- (* (double j) (+ (double j) 1.0))
+        (* (double l) (+ (double l) 1.0))
+        0.75)
+     2.0))
+
+(defn- square-well-u-matched-unnorm
+  "Reduced radial **u(r)** (unnormalized) for spherical square well radius **a** **fm**:
+   inside **r ≤ a**: **k_l(η) j_l(ξ r/a)**; outside: **j_l(ξ) k_l(η r/a)** — continuous at **r = a**."
+  [l xi eta a r]
+  (let [l (int l)
+        xi (double xi)
+        eta (double eta)
+        a (double a)
+        r (double r)]
+    (if (<= r a)
+      (* (k-l l eta) (j-l l (* (/ xi a) r)))
+      (* (j-l l xi) (k-l l (* (/ eta a) r))))))
+
+(defn- integrate-u-squared-trapezoid
+  "∫₀^{r-max} u(r)² dr with uniform trapezoid rule (**steps** segments)."
+  [u-fn r-max steps]
+  (let [n (long steps)
+        h (/ (double r-max) n)
+        u2 (fn [i] (let [r (* h (long i))]
+                     (m/pow (u-fn r) 2)))]
+    (* h (+ (* 0.5 (+ (u2 0) (u2 n)))
+            (reduce (fn [acc i] (+ acc (u2 i))) 0.0 (range 1 n))))))
+
+(defn finite-well-u-squared-norm-integral-unnorm
+  "∫₀^∞ u_unnorm(r)² dr for the matched square-well **u** (dimensionless **ξ, η**, radius **a** fm).
+   Exterior is truncated at **r_max = a (1 + tail_factor/η)**."
+  ([l xi eta a]
+   (finite-well-u-squared-norm-integral-unnorm l xi eta a 40.0 512))
+  ([l xi eta a tail-factor steps]
+   (let [eta (max (double eta) 1.0e-6)
+         a (double a)
+         tf (double tail-factor)
+         r-max (* a (+ 1.0 (/ tf eta)))
+         ufn (fn [r] (square-well-u-matched-unnorm l xi eta a r))]
+     (integrate-u-squared-trapezoid ufn r-max (long steps)))))
+
+(defn finite-well-u-at-radius-normalized
+  "Normalized reduced radial **u(a)** at well radius **a** (same **u** with ∫ u² dr = 1)."
+  [l xi eta a]
+  (let [I (finite-well-u-squared-norm-integral-unnorm l xi eta a)
+        ua (square-well-u-matched-unnorm l xi eta a a)
+        inv-norm (/ 1.0 (m/sqrt I))]
+    (* ua inv-norm)))
+
+(defn- thomas-so-delta-radial-prefactor-dimensionless
+  "Pure number **(λ_π²/a²)·(a·u_norm(a)²) = λ_π² u_norm² / a** from matched square well (**ξ, η**, **a** **fm**)."
+  [lambda-pi-sq-over-a-sq l xi eta a-fm]
+  (let [un (finite-well-u-at-radius-normalized l xi eta a-fm)
+        a (double a-fm)]
+    (* (double lambda-pi-sq-over-a-sq) a (* un un))))
+
+(defn delta-surface-thomas-so-shift-over-v0
+  "First-order δ-surface Thomas SO shift **relative to well depth V₀**:
+
+   **ΔE_so / V₀ = − (V_so⁽⁰⁾/V₀) · (λ_π²/a²) · (a·u_norm(a)²) · ⟨l·s⟩**,
+
+   with **u** reduced radial (**∫ u² dr = 1**), **a = R₀** (**fm** only enters **u** normalization and
+   **λ_π²/a²**). Inputs **V_so⁽⁰⁾/V₀** and **λ_π²/a²** are dimensionless; **`a-fm`** is needed to evaluate **u**.
+
+   **ΔE_so (MeV) = V₀ · (ΔE_so/V₀)** when **V₀** is in **MeV**."
+  [v-so-over-v0 lambda-pi-sq-over-a-sq a-fm l j xi eta]
+  (* -1.0 (double v-so-over-v0)
+     (thomas-so-delta-radial-prefactor-dimensionless lambda-pi-sq-over-a-sq l xi eta a-fm)
+     (l-dot-s-spin-half l j)))
+
+(defn delta-surface-thomas-so-shift-MeV
+  "Same δ-surface formula as **`delta-surface-thomas-so-shift-over-v0`**, with **V_so⁽⁰⁾** and **λ_π²** in
+   **MeV** / **fm²** — equals **V₀ × delta-surface-thomas-so-shift-over-v0** with **v = V_so⁽⁰⁾/V₀** and
+   **λ_π²/a² = (λ_π² in fm²) / a²**.
+
+   **ΔE_so = − V_so^(0) λ_π² (u_norm(R₀)² / R₀) ⟨l·s⟩**."
+  [V-so-0 lambda-pi-sq-fm2 a-fm l j xi eta]
+  (let [un (finite-well-u-at-radius-normalized l xi eta a-fm)
+        a (double a-fm)]
+    (* -1.0 (double V-so-0) (double lambda-pi-sq-fm2)
+       (/ (* un un) a)
+       (l-dot-s-spin-half l j))))
+
+(defn finite-well-delta-so-splitting-j-doublet-over-v0
+  "**(ΔE_so(j=l+½) − ΔE_so(j=l−½)) / V₀** from the same radial prefactor as **`delta-surface-thomas-so-shift-over-v0**.
+   **nil** for **l = 0**."
+  [v-so-over-v0 lambda-pi-sq-over-a-sq a-fm l xi eta]
+  (when (pos? l)
+    (let [pref (* -1.0 (double v-so-over-v0)
+                  (thomas-so-delta-radial-prefactor-dimensionless lambda-pi-sq-over-a-sq l xi eta a-fm))
+          j+ (+ (double l) 0.5)
+          j- (- (double l) 0.5)]
+      (* pref (- (l-dot-s-spin-half l j+) (l-dot-s-spin-half l j-))))))
+
+(defn finite-well-delta-so-splitting-j-doublet-MeV
+  "SO energy **split** **E(j=l+½) − E(j=l−½)** from the same δ-surface first-order formula
+   (both built from normalized **u** at **a**). For **l = 0** returns **nil** (no doublet).
+
+   Equals **V₀ × finite-well-delta-so-splitting-j-doublet-over-v0**."
+  [V-so-0 lambda-pi-sq-fm2 a-fm l xi eta]
+  (when (pos? l)
+    (let [un (finite-well-u-at-radius-normalized l xi eta a-fm)
+          pref (* -1.0 (double V-so-0) (double lambda-pi-sq-fm2)
+                  (/ (* un un) (double a-fm)))
+          j+ (+ (double l) 0.5)
+          j- (- (double l) 0.5)]
+      (* pref (- (l-dot-s-spin-half l j+) (l-dot-s-spin-half l j-))))))
+
+(defn find-bound-state-finite-well-nlz-delta-so
+  "Like **`find-bound-state-finite-well-nlz`** plus first-order δ-surface SO for given **j** (**l ± ½**).
+
+   7-arg: **{:delta-e-so-MeV, :j}** merged into the state.
+
+   8-arg: also **:e-central-MeV** = **−V₀·|E|/V₀**, **:e-total-MeV** = **:e-central-MeV + :delta-e-so-MeV**,
+   and **:e-central-over-v0** / **:e-total-over-v0** (same convention as **`-delta-so-over-v0`**)."
+  ([n l z0 a-fm V-so-0 lambda-pi-sq-fm2 j]
+   (when-let [st (find-bound-state-finite-well-nlz n l z0)]
+     (let [xi (:xi st)
+           eta (:eta st)
+           de (delta-surface-thomas-so-shift-MeV V-so-0 lambda-pi-sq-fm2 a-fm l j xi eta)]
+       (merge st {:delta-e-so-MeV de :j j}))))
+  ([n l z0 a-fm V-so-0 lambda-pi-sq-fm2 j V0-MeV]
+   (when-let [m (find-bound-state-finite-well-nlz-delta-so n l z0 a-fm V-so-0 lambda-pi-sq-fm2 j)]
+     (let [v0 (double V0-MeV)
+           er (:e-ratio m)
+           dec (:delta-e-so-MeV m)
+           ecm (* (- v0) er)
+           etm (+ ecm dec)
+           deov (/ dec v0)]
+       (merge m {:e-central-MeV ecm :e-total-MeV etm
+                 :e-central-over-v0 (- er)
+                 :e-total-over-v0 (+ (- er) deov)})))))
+
+(defn find-bound-state-finite-well-nlz-delta-so-over-v0
+  "Same idea as **`find-bound-state-finite-well-nlz-delta-so`**, with **:delta-e-so-over-v0**.
+
+   **Energies (zero at threshold):** **:e-central-over-v0** = **−|E|/V₀**, **:e-total-over-v0** =
+   **:e-central-over-v0 + :delta-e-so-over-v0**.  Sort by **:e-total-over-v0 ascending** = most bound first."
+  [n l z0 a-fm v-so-over-v0 lambda-pi-sq-over-a-sq j]
+  (when-let [st (find-bound-state-finite-well-nlz n l z0)]
+    (let [xi (:xi st)
+          eta (:eta st)
+          er (:e-ratio st)
+          de (delta-surface-thomas-so-shift-over-v0 v-so-over-v0 lambda-pi-sq-over-a-sq a-fm l j xi eta)
+          ec (- er)
+          et (+ ec de)]
+      (merge st {:delta-e-so-over-v0 de :j j
+                 :e-central-over-v0 ec
+                 :e-total-over-v0 et}))))

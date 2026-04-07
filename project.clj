@@ -4,6 +4,9 @@
   :url "https://github.com/alishsan/nexus-nrs"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}
+  ;; **`lein run`** delegates to **web-dashboard/** (Jetty + `/api/*`). Core library has no server here.
+  :main nexus-nrs.dashboard-runner
+  :aliases {"dashboard" ["run" "-m" "nexus-nrs.dashboard-runner"]}
   :dependencies [[org.clojure/clojure "1.12.0"]
                  ;; `fastmath.special` is shadowed by `src/fastmath/special.clj` (vendored alpha4)
                  ;; so `Si` / `si` do not compile to colliding `special$Si` vs `special$si` on APFS.

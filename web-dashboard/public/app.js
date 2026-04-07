@@ -156,6 +156,24 @@ class DWBADashboard {
             }
         });
 
+        const syncInelasticModelUi = () => {
+            const m = (document.getElementById('inelastic_model') || {}).value || 'standard';
+            const li11Box = document.getElementById('li11_paper_options');
+            const paperish = m === 'li11_paper1708' || m === 'tanaka2017';
+            if (li11Box) li11Box.style.display = paperish ? '' : 'none';
+        };
+        document.getElementById('inelastic_model')?.addEventListener('change', () => {
+            syncInelasticModelUi();
+            const m = (document.getElementById('inelastic_model') || {}).value || 'standard';
+            if (m === 'li11_paper1708' || m === 'tanaka2017') {
+                const eEx = document.getElementById('E_ex');
+                if (eEx && (parseFloat(eEx.value) === 4.44 || parseFloat(eEx.value) === 6.13)) eEx.value = '0.8';
+                const proj = document.getElementById('inelastic_projectile');
+                if (proj) proj.value = 'p';
+            }
+        });
+        syncInelasticModelUi();
+
         // Elastic target: show A/Z inputs only when Generic is selected
         document.getElementById('elastic_target')?.addEventListener('change', () => this.toggleElasticGenericInputs());
         this.toggleElasticGenericInputs();
@@ -302,6 +320,10 @@ class DWBADashboard {
             const el = document.getElementById('elastic_target_Z');
             if (el) el.value = params.elastic_target_Z;
         }
+        if (params.elastic_dsigma_L_max !== undefined) {
+            const el = document.getElementById('elastic_dsigma_L_max');
+            if (el) el.value = params.elastic_dsigma_L_max;
+        }
         this.toggleElasticGenericInputs && this.toggleElasticGenericInputs();
 
         // Update slider displays
@@ -379,6 +401,7 @@ class DWBADashboard {
             elastic_target: (document.getElementById('elastic_target') || {}).value || '16O',
             elastic_target_A: int('elastic_target_A', 16),
             elastic_target_Z: int('elastic_target_Z', 8),
+            elastic_dsigma_L_max: int('elastic_dsigma_L_max', 22),
             // Complex Woods-Saxon for elastic (optical potential)
             W0: num('elastic_W0', 0),
             R_W: num('elastic_RW', 2.0),
@@ -399,7 +422,15 @@ class DWBADashboard {
             transfer_r_max: num('transfer_r_max', 20),
             transfer_h: num('transfer_h', 0.01),
             transfer_target_A: int('transfer_target_A', 40),
-            transfer_target_Z: int('transfer_target_Z', 20)
+            transfer_target_Z: int('transfer_target_Z', 20),
+            inelastic_model: (document.getElementById('inelastic_model') || {}).value || 'standard',
+            li11_optical_set: (document.getElementById('li11_optical_set') || {}).value || 'V',
+            li11_beta_scale: num('li11_beta_scale', 1),
+            li11_L_max: int('li11_L_max', 22),
+            li11_r_max: num('li11_r_max', 45),
+            li11_h: num('li11_h', 0.02),
+            li11_theta_step: num('li11_theta_step', 5),
+            li11_transfer_ell: int('li11_transfer_ell', 1)
         };
     }
 
@@ -516,7 +547,7 @@ class DWBADashboard {
             this.showStatus('Please provide a valid energy range', 'error');
             return;
         }
-        // Backend fixes elastic dσ to L = 0…39; L_values is still sent for API consistency.
+        // elastic_dsigma_L_max: nuclear partial-wave cutoff (see Elastic tab); L_values is still for API consistency.
         const params = this.getParameters();
         const body = { ...params, energies: energiesStr, L_values: LValuesStr || '0,1,2,3,4,5' };
         
@@ -566,7 +597,53 @@ class DWBADashboard {
             this._setButtonLoading('calculate-elastic-btn', false);
         }
     }
-    async calculateInelastic() { await this._runTabCalculation('calculate-inelastic-btn', '/api/inelastic', 'inelastic'); }
+    async calculateInelastic() {
+        const modelRaw = String((document.getElementById('inelastic_model') || {}).value || 'standard').trim();
+        const model = modelRaw.toLowerCase().replace(/-/g, '_');
+        const li11Models = new Set(['li11_paper1708', 'li11', 'tanaka2017', 'paper1708']);
+        const isLi11Paper = li11Models.has(model);
+
+        const energyRangeEl = document.getElementById('energy-range');
+        const lValuesEl = document.getElementById('L-values');
+        const energiesStr = (energyRangeEl && energyRangeEl.value || '').trim();
+        const LValuesStr = (lValuesEl && lValuesEl.value || '').trim();
+
+        if (!energiesStr) {
+            this.showStatus('Please set Energy range (MeV). For ¹¹Li paper mode this is E_p,lab.', 'error');
+            return;
+        }
+        if (!isLi11Paper && !LValuesStr) {
+            this.showStatus('Please provide valid energy range and angular momenta', 'error');
+            return;
+        }
+
+        const params = { ...this.getParameters(), energies: energiesStr };
+        params.L_values = isLi11Paper ? (LValuesStr || '0') : LValuesStr;
+
+        this._setButtonLoading('calculate-inelastic-btn', true);
+        this.showStatus('Calculating...', 'info');
+        const startTime = Date.now();
+        try {
+            const result = await this._post('/api/inelastic', params);
+            if (!result.success) throw new Error(result.error || 'Calculation failed');
+            this.currentData = this.currentData || {};
+            const raw = result.data && (result.data.inelastic || result.data['inelastic']);
+            if (raw) this.currentData.inelastic = raw;
+            this.updateAllPlots();
+            this.showStatus(`Done in ${Date.now() - startTime}ms`, 'success');
+        } catch (error) {
+            console.error('Calculation error:', error);
+            let msg = error.message;
+            if (msg.includes('404')) {
+                msg = this.apiBase === 'http://localhost:3000'
+                    ? 'API not found. Start the server: cd web-dashboard && lein run — then open http://localhost:3000 in your browser (click the link above).'
+                    : 'API not found. The server may be starting or temporarily unavailable.';
+            }
+            this.showStatus(`Error: ${msg}`, 'error');
+        } finally {
+            this._setButtonLoading('calculate-inelastic-btn', false);
+        }
+    }
 
     /** Transfer: prefer energies / L from this tab; fall back to main panel; default energy 20 MeV if both empty. */
     async calculateTransfer() {
@@ -914,13 +991,15 @@ class DWBADashboard {
 
         const traces = {};
         
-        // Group by energy, optionally filtering to requested energies
+        // Group by energy, optionally filtering to requested energies (float-tolerant; JSON may differ slightly)
+        const energyRequestedP = (e) => {
+            if (!requestedEnergies) return true;
+            const x = Number(e);
+            return requestedEnergies.some((re) => Math.abs(re - x) <= 1e-5 * Math.max(1, Math.abs(re)) || Math.abs(re - x) < 1e-4);
+        };
         data.forEach(point => {
             const E = point.energy;
-            // If we have requested energies, only plot those
-            if (requestedEnergies && !requestedEnergies.includes(E)) {
-                return;
-            }
+            if (!energyRequestedP(E)) return;
             if (!traces[E]) {
                 traces[E] = {
                     x: [],
@@ -969,6 +1048,41 @@ class DWBADashboard {
     plotInelastic() {
         const data = this.currentData.inelastic;
         if (!data || data.length === 0) return;
+
+        const hasAngle = data[0] && data[0].angle !== undefined;
+        const logFloor = 1e-40;
+
+        if (hasAngle) {
+            const impl = data[0].implementation;
+            const energies = [...new Set(data.map(p => p.energy))].sort((a, b) => a - b);
+            const plotData = energies.map(E => {
+                const pts = data.filter(p => p.energy === E);
+                const tr = {
+                    x: pts.map(p => p.angle),
+                    y: pts.map(p => Math.max(p.differential_cross_section, logFloor)),
+                    name: energies.length > 1 ? `E_p,lab = ${E} MeV` : `E_p,lab = ${E} MeV`,
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    line: { width: 3, ...PLOTLY_SPLINE_LINE },
+                    marker: { size: 6 }
+                };
+                sortTraceByX(tr);
+                return tr;
+            });
+            const paperTitle = impl === 'li11_paper1708' ? '¹¹Li (p,p′) paper1708 — ' : '';
+            const layout = {
+                title: paperTitle + 'Inelastic dσ/dΩ (CM, mb/sr)',
+                xaxis: { title: 'Scattering angle θ_cm (degrees)', gridcolor: '#e0e0e0' },
+                yaxis: { title: 'dσ/dΩ (mb/sr)', type: 'log', gridcolor: '#e0e0e0' },
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                font: { family: 'Arial, sans-serif' },
+                legend: { x: 0.02, y: 0.98 },
+                margin: { t: 50, b: 50, l: 60, r: 30 }
+            };
+            Plotly.newPlot('inelastic-plot', plotData, layout, { responsive: true });
+            return;
+        }
 
         const traces = {};
         const groupByLambda = data[0] && data[0].lambda !== undefined;
