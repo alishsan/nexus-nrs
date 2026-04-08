@@ -19,3 +19,4 @@
   (let [curve (oh/o16-dp-angular-curve-handbook-mb-sr [15.0 75.0] :h 0.1 :r-max 16.0 :L-max 4)]
     (is (= 2 (count curve)))
     (is (every? #(Double/isFinite (:differential_cross_section_mb_sr %)) curve))))
+

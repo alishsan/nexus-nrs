@@ -667,6 +667,24 @@
           f-l1 (t/f-r-numerov-complex 2.0 10.0 1 U mass-factor)]
       (is (not= (re f-l0) (re f-l1)) "Should differ for different l values"))))
 
+(deftest distorted-wave-coulomb-S-from-numerov-R-matches-s-matrix-neutral-test
+  "**`distorted-wave-coulomb-S-from-numerov-R`** uses the same **Hankel±** quotient as **`s-matrix`**: with **η = 0** and **R = (r-matrix-a)/a**, **S** matches **`s-matrix`**."
+  (let [E 10.0
+        V [50.0 2.0 0.6]
+        L 2
+        a (* 2 (+ (second V) (last V)))
+        mf mass-factor
+        k (Math/sqrt (* mf E))
+        rho (* k a)
+        R-a (binding [fn/Z1Z2ee 0.0]
+               (r-matrix-a E V a L))
+        R (complex-cartesian (/ (double R-a) (double a)) 0.0)
+        S-num (t/distorted-wave-coulomb-S-from-numerov-R R L 0.0 rho)
+        S-ref (binding [fn/Z1Z2ee 0.0]
+                (s-matrix E V a L))
+        d (max-abs-diff-complex S-num S-ref)]
+    (is (< d 1e-9) (format "|ΔS| max re/im = %s" d))))
+
 (deftest distorted-wave-optical-basic-test
   (testing "Distorted wave with optical potential basic calculation"
     (let [U-fn (fn [r] (t/optical-potential-entrance-channel r :p 16 8 10.0 1 0.5 1.5))

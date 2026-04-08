@@ -8,16 +8,14 @@
    R-matrix match lives only in **`functions/s-matrix`** — same quotient as **`functions/s-matrix0`**, with
    **`Hankel±`** when **η ≠ 0**. **Do not** define **S^n** by dividing some **“full”** amplitude by **e^{2iσ}**
    (that was a bad **M_L** convention). Coulomb **σ_L** for **(3.1.88)** belongs in **`functions/partial-wave-exp2sigma-Sn-minus-one`**
-   / **`e^{2iσ}(S^n−1)`** only. Here, **`distorted-wave-optical`** **`:coulomb-tail`** only scales **|u|** to **|H_L^+|**;
-   **`nuclear-phase-shifts-map`** uses **`functions/phase-shift`** (**½ arg(S^n)**). Austern **(5.6)** rows use
-   **`coulomb-sigma-L`** + that **δ** map separately — keep those roles split.
-
-   **DWBA distorted waves vs elastic:** Each partial wave **χ_L** here is the **same kind** of continuum solution as in
-   elastic scattering: integrate with **U = V_C + V_opt(± iW)**, then **match** the interior to **Coulomb–Hankel**
-   asymptotics via the **R-matrix** (log-derivative) at the matching radius — the elastic **`functions/s-matrix`**
-   path exposes that match as **S_L^n** explicitly; **`distorted-wave-optical`** instead produces **χ(r)** on a grid
-   and may align **|u|** to **|H_L^+|** at the outer edge (**`:coulomb-tail`**). Same matching idea; DWBA post
-   form factors consume **χ** directly."
+   / **`e^{2iσ}(S^n−1)`** only. **`distorted-wave-optical`** integrates reduced **Numerov u**; optional **`:normalize-mode`**
+   (**`:raw`** default — no rescaling) or **`:max`** (peak **|**u|**). Do **not** use **`:max`** when summing many partial waves:
+   rescaling each **L** to unit peak wrecks relative **L** weights and can erase angular structure. **`:coulomb-tail`**
+   matches **|**u**|∝|H^+|** at **r_max** (needs **`:tail-eta`**, **`:tail-rho`**) but can diverge with strong absorption.
+   It does **not** reproduce the full elastic **R-matrix → S** step; for the same
+   **Hankel±** quotient as **`functions/s-matrix`**, build **R = u/(a u′)** from the grid (**`distorted-wave-numerov-R-for-smatrix`**)
+   and call **`distorted-wave-coulomb-S-from-numerov-R`**. **`nuclear-phase-shifts-map`** uses **`functions/phase-shift`** (**½ arg(S^n)**);
+   Austern **(5.6)** rows use **`coulomb-sigma-L`** + that **δ** map separately."
   (:require [fastmath.core :as m]
             [fastmath.special :as spec]
             [fastmath.polynomials :as poly]
@@ -30,6 +28,8 @@
 ;; ============================================================================
 ;; BOUND STATE WAVEFUNCTION SOLVER
 ;; ============================================================================
+
+(declare solve-bound-state-numerov-spin-orbit)
 
 (defn bound-state-start [rho l]
   "Power series expansion for bound state near rho=0 (dimensionless).
@@ -71,73 +71,66 @@
           v-eff (+ v-rho centrifugal)]
       (* lambda (- v-eff epsilon)))))
 
-(defn solve-bound-state-numerov 
-([e l v0 rad diff m-f h r-max]
-                                 "Solve the radial Schrödinger equation for a bound state using Numerov method
-   in physical units.
-   
-   Parameters (all in physical units):
-   - e: Energy in MeV (must be negative for bound states)
-   - l: Orbital angular momentum quantum number
-   - v0: Woods-Saxon potential depth in MeV
-   - rad: R0 parameter (nuclear radius) in fm
-   - diff: a0 parameter (surface diffuseness) in fm
-   - h: Step size in fm
-   - r-max: Maximum radius for integration in fm
-   
-   Returns: Vector of wavefunction values u(r) at each grid point (physical units).
-   
-   Note: For bound states, we expect u(r → ∞) → 0. This function
-   just integrates; use find-bound-state-energy to find the correct energy."
-                                 (let [steps (int (/ r-max h))
-                                       ;; Initialize with bound state start: u(r) ≈ r^(l+1) for small r
-                                       ;; For l=0: u(r) ≈ r, so u(h) ≈ h
-                                       ;; For l=1: u(r) ≈ r^2, so u(h) ≈ h^2
-                                       u0 0.0
-                                       u1 (m/pow h (inc l))  ; u1 = h^(l+1) in physical units
-                                       
-                                       ;; Pre-calculate f(r) values for Numerov using f-r-numerov
-                                       ;; f(r) = (2μ/ħ²) · [V_eff(r) - E]
-                                       ;; For bound states, E < 0, so f(r) > 0 in classically allowed region
-                                       fs (mapv (fn [r] 
-                                                  (if (zero? r)
-                                                    0.0  ; f(0) is infinite, but u(0)=0, so f(0)*u(0)=0
-                                                    (f-r-numerov r e l v0 rad diff m-f)))
-                                                (take (+ steps 2) (iterate #(+ % h) 0.0)))
-                                       h2-12 (/ (* h h) 12.0)]
-                                   
-                                   (let [results (loop [n      (long 1)
-                                                        u-prev (double u0)
-                                                        u-curr (double u1)
-                                                        acc    (transient [u0 u1])]
-                                                   (if (>= n (dec steps))
-                                                     (persistent! acc)
-                                                     (let [;; Fast vector lookups with type hints
-                                                           fn-1 (double (nth fs (dec n)))
-                                                           fn   (double (nth fs n))
-                                                           fn+1 (double (nth fs (inc n)))
-                                                           
-                                                           ;; Numerov step formula (physical units)
-                                                           ;; Primitive arithmetic for performance
-                                                           term1     (* 2.0 u-curr)
-                                                           term2     (- u-prev)
-                                                           inner-sum (+ (* 10.0 fn u-curr) 
-                                                                        (* fn-1 u-prev))
-                                                           term3     (* h2-12 inner-sum)
-                                                           
-                                                           numerator   (+ term1 term2 term3)
-                                                           denominator (- 1.0 (* h2-12 fn+1))
-                                                           
-                                                           u-next      (/ numerator denominator)]
-                                                       (recur (inc n)
-                                                              u-curr
-                                                              u-next
-                                                              (conj! acc u-next)))))]
-                                     results)))
+(defn- solve-bound-state-numerov-central
+  "Central Woods–Saxon only (no Thomas spin–orbit). See **`solve-bound-state-numerov`**."
+  [e l v0 rad diff m-f h r-max]
+  (let [steps (int (/ r-max h))
+        u0 0.0
+        u1 (m/pow h (inc l))
+        fs (mapv (fn [r]
+                   (if (zero? r)
+                     0.0
+                     (f-r-numerov r e l v0 rad diff m-f)))
+                 (take (+ steps 2) (iterate #(+ % h) 0.0)))
+        h2-12 (/ (* h h) 12.0)]
+    (let [results (loop [n      (long 1)
+                         u-prev (double u0)
+                         u-curr (double u1)
+                         acc    (transient [u0 u1])]
+                    (if (>= n (dec steps))
+                      (persistent! acc)
+                      (let [fn-1 (double (nth fs (dec n)))
+                            fn   (double (nth fs n))
+                            fn+1 (double (nth fs (inc n)))
+                            term1     (* 2.0 u-curr)
+                            term2     (- u-prev)
+                            inner-sum (+ (* 10.0 fn u-curr) (* fn-1 u-prev))
+                            term3     (* h2-12 inner-sum)
+                            numerator   (+ term1 term2 term3)
+                            denominator (- 1.0 (* h2-12 fn+1))
+                            u-next      (/ numerator denominator)]
+                        (recur (inc n) u-curr u-next (conj! acc u-next)))))]
+      results)))
 
+(defn- merge-bound-so-opts
+  "Non-nil ⇒ include Thomas SO with **j** and geometry. **`{:no-spin-orbit true}`** ⇒ central only.
+   Defaults: **j = l + ½**, **V_so ≈ max(4, 0.12·|V0|) MeV**, **R_so = R**, **a_so = a** (volume WS)."
+  [v0 rad diff l opts]
+  (when-not (:no-spin-orbit opts)
+    (let [lv (long l)
+          j (double (or (:j opts) (+ lv 0.5)))
+          v0d (Math/abs (double v0))
+          rad-d (double rad)
+          diff-d (double diff)]
+      {:j j
+       :v-so (double (or (:v-so opts) (max 4.0 (* 0.12 v0d))))
+       :r-so (double (or (:r-so opts) rad-d))
+       :a-so (double (or (:a-so opts) diff-d))})))
+
+(defn solve-bound-state-numerov
+  ([e l v0 rad diff m-f h r-max]
+   "Same as **8-arg + `nil` opts**: Thomas spin–orbit **on** with defaults **(j = l+½)**.
+   Pass **`{:no-spin-orbit true}`** as 9th argument for a pure central WS well."
+   (solve-bound-state-numerov e l v0 rad diff m-f h r-max nil))
+  ([e l v0 rad diff m-f h r-max opts]
+   "Reduced radial **u(r)** via Numerov. **By default** includes **Thomas spin–orbit** matched to the
+   volume WS geometry. Opts (optional map): **`:no-spin-orbit true`** (legacy central only); **`:j`**, **`:v-so`**, **`:r-so`**, **`:a-so`** overrides."
+   (if-let [so (merge-bound-so-opts v0 rad diff l opts)]
+     (solve-bound-state-numerov-spin-orbit e l v0 rad diff m-f h r-max
+                                            (:v-so so) (:r-so so) (:a-so so) (:j so))
+     (solve-bound-state-numerov-central e l v0 rad diff m-f h r-max)))
   ([e l Vparams m-f]
-    (solve-bound-state-numerov e l (first Vparams) (second Vparams) (last Vparams) m-f 0.01 20.)
-    ))
+   (solve-bound-state-numerov e l (first Vparams) (second Vparams) (last Vparams) m-f 0.01 20. nil)))
 
 (defn solve-bound-state-numerov-dimensionless 
   ([epsilon l lambda alpha h-rho rho-max]
@@ -379,15 +372,16 @@
 
 (defn scan-energy-range
   "Helper function to scan an energy range and compute wavefunctions.
-   Returns a vector of candidate maps with :energy, :boundary-value, :nodes."
-  [E-start E-end num-steps V-params l r-max h]
+   Returns a vector of candidate maps with :energy, :boundary-value, :nodes.
+   Optional **`opts`** passed to **`solve-bound-state-numerov`** (SO defaults / **`:no-spin-orbit`**)."
+  [E-start E-end num-steps V-params l r-max h opts]
   (let [v0 (first V-params)
         rad (second V-params)
         diff (last V-params)
         E-step (/ (- E-end E-start) num-steps)]
     (for [i (range (inc num-steps))]
       (let [E (+ E-start (* i E-step))
-            u (solve-bound-state-numerov E l v0 rad diff mass-factor h r-max)
+            u (solve-bound-state-numerov E l v0 rad diff mass-factor h r-max opts)
             u-end (bound-state-boundary-value u r-max h)
             nodes (count-nodes u)]
         {:energy E
@@ -435,10 +429,11 @@
    - l: Orbital angular momentum
    - r-max: Maximum radius
    - h: Step size
+   - opts: optional map for **`solve-bound-state-numerov`** (SO / **`:no-spin-orbit`**)
    
    Returns: List of candidates with {:energy E, :wavefunction u, :boundary-value u-end, :nodes n}"
-  [E-start E-end num-steps target-nodes V-params l r-max h]
-  (let [all-candidates (scan-energy-range E-start E-end num-steps V-params l r-max h)
+  [E-start E-end num-steps target-nodes V-params l r-max h opts]
+  (let [all-candidates (scan-energy-range E-start E-end num-steps V-params l r-max h opts)
         negative-candidates (filter (fn [c] (< (:energy c) -0.01)) all-candidates)
         sign-changes (find-sign-changes negative-candidates)
         candidates-with-nodes (filter (fn [c] (= (:nodes c) target-nodes)) sign-changes)]
@@ -476,14 +471,14 @@
         E-hi (min (+ E-guess E-range) -0.1)]
     [E-lo E-hi]))
 
-(defn create-boundary-value-function [V-params l r-max h]
+(defn create-boundary-value-function [V-params l r-max h opts]
   "Create function f(E) = u(r_max) for root finding."
   (let [v0 (first V-params)
         rad (second V-params)
         diff (last V-params)]
     (fn [E]
-      (bound-state-boundary-value 
-       (solve-bound-state-numerov E l v0 rad diff mass-factor h r-max) r-max h))))
+      (bound-state-boundary-value
+       (solve-bound-state-numerov E l v0 rad diff mass-factor h r-max opts) r-max h))))
 
 (defn validate-secant-root [root E-guess E-lo E-hi v0]
   "Validate and clamp secant root to valid range.
@@ -516,12 +511,12 @@
           (recur (inc i) [E-test E-next])
           (recur (inc i) found-range))))))
 
-(defn create-refined-result [E-root target-nodes V-params l r-max h]
+(defn create-refined-result [E-root target-nodes V-params l r-max h opts]
   "Create result map from refined energy."
   (let [v0 (first V-params)
         rad (second V-params)
         diff (last V-params)
-        u-final (solve-bound-state-numerov E-root l v0 rad diff mass-factor h r-max)
+        u-final (solve-bound-state-numerov E-root l v0 rad diff mass-factor h r-max opts)
         u-final-val (bound-state-boundary-value u-final r-max h)
         nodes (count-nodes u-final)]
     {:energy E-root
@@ -529,7 +524,7 @@
      :boundary-value u-final-val
      :nodes nodes}))
 
-(defn refine-with-secant [f E-guess E-lo E-hi u-lo-val u-mid-val u-hi-val v0 tolerance target-nodes V-params l r-max h]
+(defn refine-with-secant [f E-guess E-lo E-hi u-lo-val u-mid-val u-hi-val v0 tolerance target-nodes V-params l r-max h opts]
   "Try to refine using secant method.
    
    Returns: result map or nil if secant fails.
@@ -542,12 +537,12 @@
         E-secant-root (when secant-precise?
                        (validate-secant-root (:root secant-result) E-guess E-lo E-hi v0))
         result (when (and secant-precise? E-secant-root)
-                 (create-refined-result E-secant-root target-nodes V-params l r-max h))]
+                 (create-refined-result E-secant-root target-nodes V-params l r-max h opts))]
     ;; Return result if boundary value is reasonable (ignore node count)
     (when (and result (< (Math/abs (:boundary-value result)) 1e6))
       result)))
 
-(defn refine-with-bisection [f E-lo E-hi tolerance target-nodes V-params l r-max h]
+(defn refine-with-bisection [f E-lo E-hi tolerance target-nodes V-params l r-max h opts]
   "Try to refine using bisection method.
    
    Returns: result map or nil if bisection fails.
@@ -558,12 +553,12 @@
         ;; Check precision: |value| < tolerance
         bisection-precise? (< (Math/abs (:value bisection-result)) tolerance)
         result (when bisection-precise?
-                 (create-refined-result (:root bisection-result) target-nodes V-params l r-max h))]
+                 (create-refined-result (:root bisection-result) target-nodes V-params l r-max h opts))]
     ;; Return result if boundary value is reasonable (ignore node count)
     (when (and result (< (Math/abs (:boundary-value result)) 1e6))
       result)))
 
-(defn refine-with-grid-search [E-lo E-hi target-nodes V-params l r-max h]
+(defn refine-with-grid-search [E-lo E-hi target-nodes V-params l r-max h opts]
   "Fallback: find minimum boundary value using grid search.
    
    Returns: result map with smallest boundary value, or nil if none found.
@@ -574,7 +569,7 @@
         search-points 100
         candidates (for [i (range (inc search-points))]
                      (let [E-test (+ E-lo (* i (/ (- E-hi E-lo) search-points)))
-                           u-test (solve-bound-state-numerov E-test l v0 rad diff mass-factor h r-max)
+                           u-test (solve-bound-state-numerov E-test l v0 rad diff mass-factor h r-max opts)
                            u-test-val (bound-state-boundary-value u-test r-max h)
                            nodes-test (count-nodes u-test)]
                        {:energy E-test
@@ -608,6 +603,7 @@
    - r-max: Maximum radius
    - h: Step size
    - tolerance: Energy convergence tolerance
+   - opts: map for **`solve-bound-state-numerov`** (**`:no-spin-orbit`**, **`:j`**, …)
    
    Returns: {:energy E, :wavefunction u, :boundary-value u-end, :nodes n}
    Check precision using |boundary-value| < tolerance
@@ -615,26 +611,26 @@
    
    Uses secant method first (faster for smooth functions), falls back to bisection
    if secant doesn't converge or if boundary values have opposite signs."
-  [E-guess target-nodes V-params l r-max h tolerance]
+  [E-guess target-nodes V-params l r-max h tolerance opts]
   (let [v0 (first V-params)
         rad (second V-params)
         diff (last V-params)
         ;; Get initial boundary value to determine refinement range
-        u-guess (solve-bound-state-numerov E-guess l v0 rad diff mass-factor h r-max)
+        u-guess (solve-bound-state-numerov E-guess l v0 rad diff mass-factor h r-max opts)
         u-guess-val (bound-state-boundary-value u-guess r-max h)
         [E-lo E-hi] (get-refinement-energy-range E-guess v0 u-guess-val)
-        f (create-boundary-value-function V-params l r-max h)
-        u-lo (solve-bound-state-numerov E-lo l v0 rad diff mass-factor h r-max)
-        u-hi (solve-bound-state-numerov E-hi l v0 rad diff mass-factor h r-max)
-        u-mid (solve-bound-state-numerov E-guess l v0 rad diff mass-factor h r-max)
+        f (create-boundary-value-function V-params l r-max h opts)
+        u-lo (solve-bound-state-numerov E-lo l v0 rad diff mass-factor h r-max opts)
+        u-hi (solve-bound-state-numerov E-hi l v0 rad diff mass-factor h r-max opts)
+        u-mid (solve-bound-state-numerov E-guess l v0 rad diff mass-factor h r-max opts)
         u-lo-val (bound-state-boundary-value u-lo r-max h)
         u-hi-val (bound-state-boundary-value u-hi r-max h)
         u-mid-val (bound-state-boundary-value u-mid r-max h)
-        secant-result (refine-with-secant f E-guess E-lo E-hi u-lo-val u-mid-val u-hi-val v0 tolerance target-nodes V-params l r-max h)
+        secant-result (refine-with-secant f E-guess E-lo E-hi u-lo-val u-mid-val u-hi-val v0 tolerance target-nodes V-params l r-max h opts)
         bisection-result (when (and (not secant-result) (has-sign-change? u-lo-val u-mid-val u-hi-val))
-                          (refine-with-bisection f E-lo E-hi tolerance target-nodes V-params l r-max h))
+                          (refine-with-bisection f E-lo E-hi tolerance target-nodes V-params l r-max h opts))
         grid-result (when (and (not secant-result) (not bisection-result))
-                     (refine-with-grid-search E-lo E-hi target-nodes V-params l r-max h))
+                     (refine-with-grid-search E-lo E-hi target-nodes V-params l r-max h opts))
         result (or secant-result bisection-result grid-result)]
     ;; Return result if boundary value is reasonable (ignore node count)
     (when (and result (< (Math/abs (:boundary-value result)) 1e6))
@@ -667,7 +663,7 @@
         E-max (min base-E-max -0.1)]  ; Don't go above zero
     [E-min E-max]))
 
-(defn try-wider-search [v0 expected-nodes V-params l r-max h tolerance]
+(defn try-wider-search [v0 expected-nodes V-params l r-max h tolerance opts]
   "Try a wider energy search range.
    
    Returns: best result found, or nil if nothing found"
@@ -677,12 +673,12 @@
         base-E-wide-max (- (* v0 0.1))
         l-adjustment (* l v0 0.05)  ; Same adjustment as in get-energy-search-range
         E-wide-max (min (+ base-E-wide-max l-adjustment) -0.1)
-        wide-candidates (find-energy-with-nodes E-wide-min E-wide-max 200 expected-nodes 
-                                                V-params l r-max h)
+        wide-candidates (find-energy-with-nodes E-wide-min E-wide-max 200 expected-nodes
+                                                V-params l r-max h opts)
         wide-result (first wide-candidates)]
     (if (and wide-result (< (:energy wide-result) -0.01))
       ;; Only refine if boundary value is reasonable (not huge) - IGNORE node count
-      (let [refined (refine-bound-state-energy (:energy wide-result) expected-nodes V-params l r-max h tolerance)]
+      (let [refined (refine-bound-state-energy (:energy wide-result) expected-nodes V-params l r-max h tolerance opts)]
         ;; Only return if refined result has reasonable boundary value
         (when (and refined
                    (< (Math/abs (:boundary-value refined)) 1e6))  ; Reject huge boundary values
@@ -707,16 +703,16 @@
   (when (> coarse-boundary 10.0)
     (println (format "  Refinement: coarse boundary=%.2e, refined boundary=%.2e, improvement=%.1f%%"
                    coarse-boundary refined-boundary 
-                   (* 100.0 (/ (- coarse-boundary refined-boundary) coarse-boundary)))
+                   (* 100.0 (/ (- coarse-boundary refined-boundary) coarse-boundary))))
     (println (format "  Coarse nodes=%d, refined nodes=%d, expected=%d"
-                   (:nodes coarse-result) refined-nodes expected-nodes)))))
+                   (:nodes coarse-result) refined-nodes expected-nodes))))
 
 (defn try-refinement-with-wide-search [E-guess expected-nodes coarse-result coarse-boundary
-                                       E-search-min E-search-max v0 V-params l r-max h tolerance]
+                                       E-search-min E-search-max v0 V-params l r-max h tolerance opts]
   "Try to refine the energy, with fallback to wider search if needed.
    
    Returns: refined result if boundary value improved (ignores node count)"
-  (let [refined (refine-bound-state-energy E-guess expected-nodes V-params l r-max h tolerance)]
+  (let [refined (refine-bound-state-energy E-guess expected-nodes V-params l r-max h tolerance opts)]
     (if refined
       (let [refined-boundary (Math/abs (:boundary-value refined))
             refined-energy (:energy refined)
@@ -727,33 +723,31 @@
         (if (refinement-improved? refined coarse-result coarse-boundary expected-nodes)
           refined
           ;; If refinement doesn't improve, try wider search or return the better one
-          (let [wide-refined (try-wider-search v0 expected-nodes V-params l r-max h tolerance)]
+          (let [wide-refined (try-wider-search v0 expected-nodes V-params l r-max h tolerance opts)]
             (if (and wide-refined
                      (< (Math/abs (:boundary-value wide-refined)) coarse-boundary))
               wide-refined
               ;; Use the one with smaller boundary value (refined or coarse)
               (if (< refined-boundary coarse-boundary)
                 refined
-                coarse-result))))
-      ;; If refinement returned nil, use coarse result
+                coarse-result)))))
       coarse-result)))
-)
 
 (defn should-refine? [coarse-result expected-nodes]
   "Check if refinement should be attempted.
    IGNORES node count - only checks boundary value."
   (> (Math/abs (:boundary-value coarse-result)) 1.0))
 
-(defn handle-invalid-energy [E-guess E-search-min E-search-max v0 expected-nodes V-params l r-max h tolerance coarse-result]
+(defn handle-invalid-energy [E-guess E-search-min E-search-max v0 expected-nodes V-params l r-max h tolerance opts coarse-result]
   "Handle case when coarse scan finds invalid energy."
   (println (format "Warning: Coarse scan found invalid energy %.6f MeV (expected range: [%.2f, %.2f] MeV)"
                  E-guess E-search-min E-search-max))
-  (or (try-wider-search v0 expected-nodes V-params l r-max h tolerance)
+  (or (try-wider-search v0 expected-nodes V-params l r-max h tolerance opts)
       coarse-result))
 
-(defn handle-wrong-nodes [v0 expected-nodes V-params l r-max h tolerance coarse-result]
+(defn handle-wrong-nodes [v0 expected-nodes V-params l r-max h tolerance opts coarse-result]
   "Handle case when coarse scan finds wrong number of nodes."
-  (or (try-wider-search v0 expected-nodes V-params l r-max h tolerance)
+  (or (try-wider-search v0 expected-nodes V-params l r-max h tolerance opts)
       (do
         (println (format "Warning: Could not find state with %d nodes. Found %d nodes at E=%.2f MeV"
                        expected-nodes (:nodes coarse-result) (:energy coarse-result)))
@@ -762,6 +756,9 @@
 
 (defn find-bound-state-energy
   "Find bound state energy using shooting method.
+   
+   **Spin–orbit:** By default Thomas SO is **on** (same opts as **`solve-bound-state-numerov`**).
+   Use **`{:no-spin-orbit true}`** in the optional **opts** map for a central WS well only.
    
    Parameters:
    - V-params: Woods-Saxon parameters [V0, R0, a0]
@@ -772,6 +769,7 @@
    - E-min: Minimum energy to search (default: -V0, the potential depth)
    - E-max: Maximum energy to search (default: -0.1 MeV, just below zero)
    - tolerance: Energy convergence tolerance (default: 0.01 MeV)
+   - opts: optional map (**`:j`**, **`:v-so`**, **`:r-so`**, **`:a-so`**, **`:no-spin-orbit`**)
    
    Returns: {:energy E, :wavefunction u, :nodes n-nodes, :boundary-value u-end}
    Check precision using |boundary-value| < tolerance
@@ -783,35 +781,40 @@
        because bound states are ordered: E(n=0) < E(n=1) < E(n=2) < ..."
   ([V-params l r-max h]
    (let [v0 (first V-params)]
-     (find-bound-state-energy V-params l r-max h (- v0) -0.1 0.01)))
+     (find-bound-state-energy V-params l r-max h (- v0) -0.1 0.01 nil)))
   ([V-params l n r-max h]
-   ;; 5-arg: n = principal quantum number (1,2,...), target radial nodes = n - 1
+   (find-bound-state-energy V-params l n r-max h nil))
+  ([V-params l n r-max h opts]
+   ;; n = principal quantum number (1,2,...), target radial nodes = n - 1
    (let [v0 (first V-params)
          target-nodes (max 0 (dec n))
          tolerance 0.01
          [E-min E-max] (get-energy-search-range n l v0)
-         candidates (find-energy-with-nodes E-min E-max 150 target-nodes V-params l r-max h)
+         candidates (find-energy-with-nodes E-min E-max 150 target-nodes V-params l r-max h opts)
          best (first (sort-by #(Math/abs (:boundary-value %)) (or candidates [])))
          E-guess (when best (:energy best))
-         refined (when E-guess (refine-bound-state-energy E-guess target-nodes V-params l r-max h tolerance))]
+         refined (when E-guess (refine-bound-state-energy E-guess target-nodes V-params l r-max h tolerance opts))]
      (or refined
-         (try-wider-search v0 target-nodes V-params l r-max h tolerance)
-         ;; fallback: 4-arg (first sign change, often ground state)
-         (find-bound-state-energy V-params l r-max h))))
+         (try-wider-search v0 target-nodes V-params l r-max h tolerance opts)
+         ;; fallback: first sign-change branch with same opts
+         (find-bound-state-energy V-params l r-max h (- v0) -0.1 0.01 opts))))
   ([V-params l r-max h E-min E-max tolerance]
+   (find-bound-state-energy V-params l r-max h E-min E-max tolerance nil))
+  ([V-params l r-max h E-min E-max tolerance opts]
    (let [v0 (first V-params)
          rad (second V-params)
          diff (last V-params)
          [E-search-min E-search-max] [(- v0) -0.1]
-         coarse-candidates (scan-energy-range E-search-min E-search-max 100 V-params l r-max h)
+         coarse-candidates (scan-energy-range E-search-min E-search-max 100 V-params l r-max h opts)
          sign-change-pairs (find-sign-change-pairs coarse-candidates)]
      (when (seq sign-change-pairs)
        (let [first-pair (first sign-change-pairs)
              [E1 E2] first-pair
-             root-result (bisection (fn [x] (last (solve-bound-state-numerov x l v0 rad diff mass-factor h r-max))) 
+             root-result (bisection (fn [x]
+                                      (last (solve-bound-state-numerov x l v0 rad diff mass-factor h r-max opts)))
                                     [E1 E2] tolerance 100)
              E-refined (:root root-result)
-             u-refined (solve-bound-state-numerov E-refined l v0 rad diff mass-factor h r-max)
+             u-refined (solve-bound-state-numerov E-refined l v0 rad diff mass-factor h r-max opts)
              u-end (bound-state-boundary-value u-refined r-max h)
              nodes (count-nodes u-refined)]
          {:energy E-refined
@@ -861,13 +864,17 @@
 (defn solve-bound-state
   "Main function to solve for a bound state wavefunction.
    
+   Thomas spin–orbit is **on by default** in the radial equation (**`j`** selects the **⟨l·s⟩** term;
+   omit **j** to default **j = l + ½**). Pass **`{:no-spin-orbit true}`** in **opts** for a central WS only.
+   
    Parameters:
    - V-params: Woods-Saxon parameters [V0, R0, a0]
    - n: Principal quantum number (1, 2, 3, ...)
    - l: Orbital angular momentum (0, 1, 2, ...)
-   - j: Total angular momentum (l ± 1/2 for nucleons, but we'll ignore spin-orbit for now)
+   - j: Total angular momentum **l ± ½** (optional; defaults **l + ½**)
    - r-max: Maximum radius (default: 20.0 fm)
    - h: Step size (default: 0.01 fm)
+   - opts: optional map for **`find-bound-state-energy`** / SO (**`:no-spin-orbit`**, **`:v-so`**, …)
    
    Returns: {:energy E, :wavefunction u, :normalized-wavefunction u-norm, 
              :nodes n-nodes, :quantum-numbers {:n n, :l l, :j j}}
@@ -876,13 +883,17 @@
    (solve-bound-state [50.0 2.0 0.6] 1 0 nil)
    => Finds 1s bound state in Woods-Saxon well"
   ([V-params n l]
-   (solve-bound-state V-params n l nil 20.0 0.01))
+   (solve-bound-state V-params n l nil 20.0 0.01 nil))
   ([V-params n l j]
-   (solve-bound-state V-params n l j 20.0 0.01))
+   (solve-bound-state V-params n l j 20.0 0.01 nil))
   ([V-params n l j r-max h]
+   (solve-bound-state V-params n l j r-max h nil))
+  ([V-params n l j r-max h opts]
    ;; For nuclear potentials, n represents the number of radial nodes (not principal quantum number)
    ;; No constraint like n > l applies - nuclear bound states are labeled by radial nodes
-   (let [result (find-bound-state-energy V-params l n r-max h)
+   (let [so-opts (cond-> (or opts {})
+                   (some? j) (assoc :j j))
+         result (find-bound-state-energy V-params l n r-max h so-opts)
          wavefunction (:wavefunction result)]
      (when (or (nil? wavefunction) (empty? wavefunction))
        (throw (IllegalArgumentException. 
@@ -894,7 +905,7 @@
         :normalized-wavefunction u-norm
         :nodes (:nodes result)
         :boundary-value (:boundary-value result)
-        :quantum-numbers {:n n, :l l, :j j}
+        :quantum-numbers {:n n, :l l, :j (or j (+ (long l) 0.5))}
         :r-max r-max
         :h h}))))
 
@@ -1396,9 +1407,7 @@
    
    Returns: Transfer amplitude T_post
    
-   Note: Default distorted waves are max-normalized (`distorted-wave-optical` **`:normalize-mode :max`**); optional
-   **`:coulomb-tail`** (see **`distorted-wave-optical`** doc) gives better partial-wave ratios for Austern **(5.6)**; absolute
-   scale vs. unit-flux DWUCK may need asymptotic matching — but u→R fixes the dominant r-measure bug."
+   Note: **`distorted-wave-optical`** (see **`:normalize-mode`** — default **`:raw`**). For the elastic **R → S** Hankel quotient, use **`distorted-wave-numerov-R-for-smatrix`** + **`distorted-wave-coulomb-S-from-numerov-R`**."
   ([chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params]
    (transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h interaction-type interaction-params {}))
   ([chi-i chi-f phi-i phi-f _r-max h interaction-type interaction-params opts]
@@ -3279,13 +3288,13 @@
                  10.0)  ; Default
         W0-energy-dep (* W0-base (Math/sqrt E-lab))  ; Rough energy dependence
         
-        ;; Spin-orbit parameters
+        ;; Spin-orbit parameters (Thomas; non-zero defaults for p, n, d — tune for fits)
         V-so (case projectile
               :p 7.0
               :n 7.0
-              :d 0.0  ; No spin-orbit for deuterons typically
-              :alpha 0.0
-              0.0)  ; Default: no spin-orbit
+              :d 5.5
+              :alpha 0.0  ; spin-0 — no l·s
+              7.0)
         
         R-so R-base
         a-so a-diff]
@@ -3433,16 +3442,17 @@
 
 (defn f-r-numerov-complex
   "Calculate f(r) for Numerov method with complex optical potential.
-   
-   f(r) = (2μ/ħ²) * [E - U(r)] - l(l+1)/r²
-   
+
+   Same reduced radial convention as **`functions/f-r-numerov`**: **u'' = f u** with
+   **f(r) = l(l+1)/r² + (2μ/ħ²)[U(r) − E]** ( **U** = optical potential in MeV).
+
    Parameters:
    - r: Radial distance (fm)
    - E: Energy (MeV)
    - l: Orbital angular momentum
    - U: Complex potential U(r) (MeV)
    - mass-factor: Mass factor (2μ/ħ²)
-   
+
    Returns: Complex f(r) value"
   [r E l U mass-factor]
   (let [;; Check if U is NaN or Inf
@@ -3454,73 +3464,91 @@
         centrifugal (if (zero? r)
                      0.0  ; Avoid division by zero
                      (/ (* l (+ l 1.0)) (* r r)))
-        ;; Effective potential term: (2μ/ħ²) * [E - U(r)]
-        U-effective (if (not U-valid)
-                     (complex-cartesian 0.0 0.0)  ; Return zero if U is invalid
-                     (if (number? U)
-                       (- E U)
-                       (subt E U)))
-        potential-term (mul mass-factor U-effective)
-        ;; Total: f(r) = (2μ/ħ²)[E-U] - l(l+1)/r²
+        ;; (2μ/ħ²) * [U(r) − E] — matches **`functions/f-r-numerov`** / **`functions/r-matrix`**.
+        U-minus-E (if (not U-valid)
+                    (complex-cartesian 0.0 0.0)
+                    (if (number? U)
+                      (- U E)
+                      (subt U (complex-cartesian E 0.0))))
+        potential-term (mul mass-factor U-minus-E)
         centrifugal-complex (complex-cartesian centrifugal 0.0)
-        f-total (subt potential-term centrifugal-complex)]
+        f-total (add centrifugal-complex potential-term)]
     f-total))
 
+(defn- distorted-wave-hankel-drho [rho]
+  (max 1.0e-8 (min 2.0e-2 (* (double rho) 2.0e-4))))
+
+(defn- distorted-wave-extract-u-at-end
+  [u-vec h]
+  (let [n (count u-vec)]
+    (when (< n 2)
+      (throw (ex-info "distorted-wave-optical: need at least two radial samples" {:count n})))
+    (let [last-idx (dec n)
+          u-last (nth u-vec last-idx)
+          u-prev (nth u-vec (dec last-idx))
+          r (* (double last-idx) (double h))
+          u-prime (div (subt2 u-last u-prev) (complex-cartesian (double h) 0.0))]
+      {:u u-last :u-prime u-prime :r r})))
+
+(defn distorted-wave-numerov-R-for-smatrix
+  "**R = u/(a u′)** at **r = a** (fm) from **Numerov** samples of reduced **u = r χ** on step **h**, for use in the
+  same **S** quotient as **`functions/s-matrix`**. Uses central **u′** when **a** is interior to the grid."
+  [u-vec h a-fm]
+  (let [h (double h)
+        n (count u-vec)]
+    (when (< n 3)
+      (throw (ex-info "distorted-wave-numerov-R-for-smatrix: need ≥3 samples" {:count n})))
+    (let [last-idx (dec n)
+          i (max 2 (min (dec last-idx) (int (Math/floor (/ (double a-fm) h)))))
+          r (* i h)
+          u-i (nth u-vec i)
+          up (if (< i (dec last-idx))
+               (div (subt2 (nth u-vec (inc i)) (nth u-vec (dec i)))
+                    (complex-cartesian (* 2.0 h) 0.0))
+               (div (subt2 (nth u-vec i) (nth u-vec (dec i)))
+                    (complex-cartesian h 0.0)))]
+      (div u-i (mul (complex-cartesian r 0.0) up)))))
+
+(defn- distorted-wave-coulomb-S-from-R
+  [R L eta rho]
+  (let [L (long L)
+        eta (double eta)
+        rho (double rho)
+        d-rho (distorted-wave-hankel-drho rho)
+        rho-c (complex-cartesian rho 0.0)
+        dhm (deriv Hankel- L eta rho d-rho)
+        dhp (deriv Hankel+ L eta rho d-rho)
+        num (subt2 (Hankel- L eta rho) (mul rho-c R dhm))
+        den (subt2 (Hankel+ L eta rho) (mul rho-c R dhp))]
+    (div num den)))
+
+(defn distorted-wave-coulomb-S-from-numerov-R
+  "**S** from the same **Hankel±** quotient as **`functions/s-matrix`** with **R = u/(a u′)** (complex **R** allowed).
+
+  **ρ = k a** (matching **`functions/s-matrix`** at radius **a**). **η** is the channel **η** (same as Numerov input **E**, **Z1Z2**).
+
+  The radial **R-matrix** **R** is **u/(a u′)** with **u = r χ** on the uniform grid (**`distorted-wave-numerov-R-for-smatrix`**). Do **not** use this as a simple global scale on the whole **u** vector for DWBA unless you are reproducing the elastic flux convention explicitly."
+  [R L eta rho]
+  (distorted-wave-coulomb-S-from-R R L eta rho))
+
 (defn distorted-wave-optical
-  "Calculate distorted wave using optical potential with complex Numerov.
+  "Reduced radial **u = r χ** (complex Numerov); DWBA uses **R = u/r**.
 
-   **Context (DWBA):** This **χ_L** is the **same physical object** as the elastic distorted wave in that partial
-   wave: solution of the radial equation with **U = V_C + V_opt**, matched at the nuclear surface to **outgoing**
-   Coulomb behavior (**R-matrix / log-derivative** ↔ **Hankel±**), as **`functions/s-matrix`** does for the
-   elastic **S_L^n** quotient. Here you get **χ(r)** on a grid for overlap integrals; optional **`:coulomb-tail`**
-   enforces Coulomb normalization at **r_max** only (see **ns** doc).
+   **`:normalize-mode`** (default **`:raw`**): **`:raw`** — no rescaling (preserves relative strength between partial waves when you sum many **L**). **`:max`** — scale **u** so **max |u| = 1** on the grid (**not** DWUCK’s unit incoming-flux convention; see **`ca40-dp-flux-scale-to-embedded-dwuck`** / comments on max vs flux). **`:coulomb-tail`** — **|**u**|∝|H_L^+|** vs **ρ = `:tail-rho`**, **η = `:tail-eta`** at the last sample (unsafe with heavy absorption).
 
-   Solves the Schrödinger equation with optical potential:
-   -∇²/2μ · χ + U(r) · χ = E · χ
-   
-   Parameters:
-   - E: Energy (MeV)
-   - l: Orbital angular momentum
-   - s: Spin
-   - j: Total angular momentum
-   - optical-potential-fn: Function r → U(r) (complex potential)
-   - r-max: Maximum radius (fm)
-   - h: Step size (fm)
-   - mass-factor: Mass factor (2μ/ħ²)
-   - Optional keywords:
-     - **`:normalize-mode`** — **`:max`** (default): scale χ so **max |χ| = 1** (legacy).
-       **`:coulomb-tail`**: scale χ so **|u_last|** matches **|H_L^+(η, ρ)|** at **ρ = k r_max** with
-       **u = r χ** reduced wave on the last grid point (same **η**, **k** as **`channel-sommerfeld-eta`** /
-       **`Hankel+`**). This is **magnitude-only** tail matching for **χ** — **not** elastic **S_L^n** and **not**
-       a substitute for **`functions/s-matrix`** (R-matrix / **Hankel** quotient). Improves **relative** partial-wave
-       weights vs interior **`:max`** norm and tames **θ → π** blow-up in multi-**L** Austern **(5.6)** sums when
-       high **L** radial integrals stay large. Pass **`:tail-eta`** (Sommerfeld **η**) and **`:tail-rho`** (**k r_max**, dimensionless).
-   
-   Returns: Vector of complex distorted wave values χ(r)
-   
-   Note: Uses complex Numerov integration. The wavefunction will be complex
-   due to the imaginary part of the optical potential (absorption).
-   
-   Example:
-   (let [U-fn (fn [r] (optical-potential-entrance-channel r :d 16 8 10.0 1 0.5 1.5))]
-     (distorted-wave-optical 10.0 1 0.5 1.5 U-fn 20.0 0.01 mass-factor))"
+   For the elastic **R → S** quotient, use **`distorted-wave-numerov-R-for-smatrix`** + **`distorted-wave-coulomb-S-from-numerov-R`**."
   [E l s j optical-potential-fn r-max h mass-factor
    & {:keys [normalize-mode tail-eta tail-rho]
-      :or {normalize-mode :max}}]
+      :or {normalize-mode :raw}}]
   (let [steps (int (/ r-max h))
-        h2-12 (/ (* h h) 12.0)
-        ;; Initial conditions: u(0) = 0, u(h) ≈ h^(l+1)
         u0 (complex-cartesian 0.0 0.0)
         u1-init (Math/pow h (inc l))
         u1 (complex-cartesian u1-init 0.0)
-        
-        ;; Pre-calculate f(r) values at all radial points
         rs (take (+ steps 2) (iterate #(+ % h) 0.0))
         fs (mapv (fn [r]
-                  (let [U (optical-potential-fn r)]
-                    (f-r-numerov-complex r E l U mass-factor)))
-                rs)]
-    ;; Complex Numerov integration
+                   (let [U (optical-potential-fn r)]
+                     (f-r-numerov-complex r E l U mass-factor)))
+                 rs)]
     (let [results (loop [n 1
                          results-vec [u0 u1]]
                     (if (>= n (dec steps))
@@ -3530,7 +3558,6 @@
                             fn-1 (get fs (dec n))
                             fn (get fs n)
                             fn+1 (get fs (inc n))
-                            ;; Use complex Numerov step
                             un+1 (numerov-step-complex un un-1 fn-1 fn fn+1 h)]
                         (recur (inc n) (conj results-vec un+1)))))
           u-last (last results)
@@ -3544,19 +3571,21 @@
               (when (and (pos? ul) (pos? Hmag) (Double/isFinite Hmag) (Double/isFinite ul))
                 (/ Hmag ul))))
           max-mag (transduce (map #(if (number? %)
-                                    (Math/abs %)
-                                    (mag %)))
-                            (completing max)
-                            Double/NEGATIVE_INFINITY
-                            results)
-          norm-factor (or tail-norm
-                          (if (and (> max-mag 1e-10) (< max-mag 1e20))
-                            (/ 1.0 max-mag)
-                            1.0))]
+                                     (Math/abs %)
+                                     (mag %)))
+                             (completing max)
+                             Double/NEGATIVE_INFINITY
+                             results)
+          max-factor (if (and (> max-mag 1e-10) (< max-mag 1e20))
+                       (/ 1.0 max-mag)
+                       1.0)
+          norm-factor (case normalize-mode
+                        :raw 1.0
+                        :max max-factor
+                        :coulomb-tail (or tail-norm max-factor)
+                        1.0)]
       (mapv (fn [u]
-              (if (number? u)
-                (* norm-factor u)
-                (mul norm-factor u)))
+              (mul (complex-cartesian (double norm-factor) 0.0) u))
             results))))
 
 (defn optical-potential-summary

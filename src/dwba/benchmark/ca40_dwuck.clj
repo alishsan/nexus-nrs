@@ -26,14 +26,14 @@
     and **Austern Eq. (5.3)** exit-radius sampling **`:zr-chi-exit-mass-ratio` = M_Ca40/M_Ca41**.
   - **Angular:** coherent or m-sum per **`:angular-mode`**, **l_i=0**, **l_f=3**, **`:Ls`**.
 
-  **vs DWUCK4 listing:** still a **reduced** model (ZR POST, max-norm χ). Listing **asymmetry** needs full
+  **vs DWUCK4 listing:** still a **reduced** model (ZR POST, **:coulomb-tail** χ scale at **r_max**). Listing **asymmetry** needs full
   **T** / **S** / **β** / **P_L^m** — not this benchmark alone.
 
   Optional **`:cm-asymmetry-kappa`** (default **0**) is **non-DWBA** (**1 + κ cos θ_cm**) for exploratory
   plots only (e.g. rough visual match to listing shape).
 
   **Absolute scale (mb/sr)** — `transfer-amplitude-post` converts **u(r)=r·R(r)** to **R(r)** in the
-  radial overlap. Distorted waves are **max-normalized**, not unit asymptotic flux — use
+  radial overlap. Distorted waves use **:coulomb-tail** matching at **r_max**, not unit asymptotic flux — use
   **`ca40-dp-flux-scale-to-embedded-dwuck`** when comparing to listing **Inelsig** (fm²/sr ×
   **`dwuck-inelsig-fm2-sr->mb-sr`**). Spectroscopic **C²S** not folded (**S=1**).
 
@@ -42,7 +42,7 @@
   **REPL:** `(require '[dwba.benchmark.ca40-dwuck :as c])` then `(c/ca40-dp-kinematics)` —
   not `(dwba/benchmark/...)` (slashes are division, not namespaces)."
   (:require [dwba.transfer :as t]
-            [functions :refer [mass-factor-from-mu]]
+            [functions :as fn :refer [mass-factor-from-mu channel-sommerfeld-eta]]
             [complex :refer [mag]]))
 
 (def dwuck-inelsig-fm2-sr->mb-sr
@@ -88,6 +88,10 @@
      :k-i (Math/sqrt (* mfi e-cm-i))
      :k-f (Math/sqrt (* mff e-cm-f))}))
 
+(defn- ca40-dp-tail-eta ^double [^double e-cm ^double mf ^double z12ee]
+  (binding [fn/mass-factor mf fn/Z1Z2ee z12ee]
+    (channel-sommerfeld-eta e-cm)))
+
 (defn optical-u-deuteron-ca40
   "Volume + imaginary Woods–Saxon from DWUCK particle-1 block (d + Ca40), R_C from listing RC."
   [L s j]
@@ -120,22 +124,31 @@
   [L {:keys [r-max h]
       :or {r-max 22.0 h 0.05}}]
   (let [L (long L)
-        {:keys [mass-factor-i mass-factor-f e-cm-i e-cm-f]} (ca40-dp-kinematics)
+        {:keys [mass-factor-i mass-factor-f e-cm-i e-cm-f k-i k-f]} (ca40-dp-kinematics)
         j-d (ca40-dp-deuteron-j-for-partial-wave L)
         j-p (+ 0.5 (double L))
         m-t (* 40.0 931.494)
         m-r (* 41.0 931.494)
         zr-ratio (t/austern-zr-chi-exit-mass-ratio m-t m-r)
+        z12 (* 1.44 1.0 20.0)
+        eta-i (ca40-dp-tail-eta e-cm-i mass-factor-i z12)
+        eta-f (ca40-dp-tail-eta e-cm-f mass-factor-f z12)
+        rho-i (* k-i r-max)
+        rho-f (* k-f r-max)
         phi-f (t/normalize-bound-state
-               (t/solve-bound-state-numerov -8.364 3 58.4538 4.0355 0.7 0.048 h r-max) h)
+               (t/solve-bound-state-numerov -8.364 3 58.4538 4.0355 0.7 0.048 h r-max {:no-spin-orbit true}) h)
         phi-i (t/normalize-bound-state
-               (t/solve-bound-state-numerov -2.224 0 42.0 3.9 0.65 0.048 h r-max) h)
+               (t/solve-bound-state-numerov -2.224 0 42.0 3.9 0.65 0.048 h r-max {:no-spin-orbit true}) h)
         chi-i (t/distorted-wave-optical e-cm-i L 1.0 j-d
                                         (optical-u-deuteron-ca40 L 1.0 j-d)
-                                        r-max h mass-factor-i)
+                                        r-max h mass-factor-i
+                                        :normalize-mode :coulomb-tail
+                                        :tail-eta eta-i :tail-rho rho-i)
         chi-f (t/distorted-wave-optical e-cm-f L 0.5 j-p
                                         (optical-u-proton-ca41 L 0.5 j-p)
-                                        r-max h mass-factor-f)
+                                        r-max h mass-factor-f
+                                        :normalize-mode :coulomb-tail
+                                        :tail-eta eta-f :tail-rho rho-f)
         D0 (t/zero-range-constant :d-p)]
     (t/transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h :zero-range D0
                                {:zr-chi-exit-mass-ratio zr-ratio

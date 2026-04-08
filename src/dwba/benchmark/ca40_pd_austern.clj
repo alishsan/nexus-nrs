@@ -125,9 +125,7 @@
 
   **`:transfer-ell`** — bound orbital **ℓ** in **(5.6)** (default **`ca40-pd-bound-ell`**, **3** here).
 
-  Distorted **χ** use **`:coulomb-tail`** normalization (**`distorted-wave-optical`**) — **|u(r_max)|** matched to
-  **|H_L^+(η, k r_max)|** per **L** so partial waves are not reweighted only by interior maxima (**mitigates
-  artificial **θ → π** growth when **L_max** is large and (5.6) multiplies by **√(2L_β+1) Y_{L_β}^{m}(π)**)."
+  Distorted **χ** use **`distorted-wave-optical`** with **`:coulomb-tail`** (**|**u**| ∝ |H^+|** at **r_max**)."
   [& {:keys [r-max h L-max e-cm-i transfer-ell]
       :or {r-max 100.0 h 0.05 L-max 20 e-cm-i 18.0 transfer-ell ca40-pd-bound-ell}}]
   (let [{:keys [mass-factor-i mass-factor-f e-cm-f k-i k-f M-target M-residual]}
@@ -135,7 +133,7 @@
         zr (t/austern-zr-chi-exit-mass-ratio M-target M-residual)
         ell (long transfer-ell)
         phi-n (t/normalize-bound-state
-               (t/solve-bound-state-numerov -8.364 3 58.4538 4.0355 0.7 0.048 h r-max) h)
+               (t/solve-bound-state-numerov -8.364 3 58.4538 4.0355 0.7 0.048 h r-max {:no-spin-orbit true}) h)
         F-handbook (t/handbook-F-lsj-radial-from-neutron-bound-u phi-n h)
         z12 (* 1.44 1.0 20.0)
         eta-i (sommerfeld-eta-channel e-cm-i mass-factor-i z12)

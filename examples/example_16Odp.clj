@@ -52,7 +52,7 @@
 (println "")
 
 (let [h 0.08
-      r-max 20.0
+      r-max 100.0
       L-max 6
       angles-deg (range 0.0 181.0 5.0)
       curve (oh/o16-dp-angular-curve-handbook-mb-sr
@@ -62,12 +62,12 @@
           (first (oh/o16-dp-angular-curve-handbook-mb-sr [0.0] :h h :r-max r-max :L-max L-max)))
       s70 (:differential_cross_section_mb_sr
            (first (oh/o16-dp-angular-curve-handbook-mb-sr [70.0] :h h :r-max r-max :L-max L-max)))]
-  (println "=== dσ/dΩ (mb/sr, CM) — incoherent Σ_m |T_m|²; χ :coulomb-tail (default) ===")
+  (println "=== dσ/dΩ (mb/sr, CM) — incoherent Σ_m |T_m|²; χ :coulomb-tail norm (handbook default) ===")
   (println (format "  Grid: h=%.3f fm, r_max=%.1f fm, L_max=%d" h r-max L-max))
   (println (format "  dσ/dΩ(0°)  ≈ %.6e mb/sr" s0))
   (println (format "  dσ/dΩ(70°) ≈ %.6e mb/sr" s70))
   (println "  Absolute mb/sr vs a handbook figure requires matching optics, CM energy, and conventions;")
-  (println "  optional :chi-normalize-mode :max | :coulomb-tail on o16-dp-handbook fns alters χ scaling.")
+  (println "  optional :chi-normalize-mode :coulomb-tail | :raw | :max on o16-dp-handbook (see transfer/distorted-wave-optical).")
   (println "")
   (println "Optical model: Ca40-listing-like depths, radii scaled to A≈16–17, Z=8 (`o16-dp-handbook` docstring).")
   (println "Bound neutron in 17O: l=2, E≈−4.14 MeV, illustrative Woods–Saxon [56, 2.85, 0.6] MeV/fm.")

@@ -20,8 +20,9 @@
    outside), not a different Ansatz; elastic **`functions/s-matrix`** is the explicit **S_L^n** from that match for
    the WS elastic driver.
 
-   **Elastic / Coulomb S (if you add it here):** Optional **`:coulomb-tail`** adjusts **|u|** at **r_max** only — **not**
-   **S_L^n**. For Coulomb elastic **dσ** / **(3.1.88)** use **`functions/s-matrix`** and
+   **`:distorted-norm`** on **`distorted-wave-entrance`** / **exit** — **`:coulomb-tail`** (default on charged branches), **`:raw`**, or **`:max`** (see **`transfer/distorted-wave-optical`**).
+
+   **Elastic / Coulomb S:** For Coulomb elastic **dσ** / **(3.1.88)** use **`functions/s-matrix`** and
    **`functions/partial-wave-exp2sigma-Sn-minus-one`** — **never** rebuild **S^n** by peeling **e^{2iσ}** from an ad hoc **M_L**.
 
    **Charged inelastic (e.g. (p,p′)):** When you pass explicit **`V-params`** (= **[V₀,R,a]**) **and**
@@ -701,23 +702,26 @@
     :alpha 2
     0))
 
-(defn- coulomb-tail-norm-kwseq
-  "When **`distorted-norm`** is **`:coulomb-tail`**, kwargs for **`transfer/distorted-wave-optical`**:
-   **η** = **Z₁ Z₂ e² · mass-factor / (2k)** (same as **`functions/channel-sommerfeld-eta`**), **ρ = k r_max**."
-  ;; No ^double/^long on arity — Clojure allows at most 4 args for primitive fns; this has 6 params.
+(defn- distorted-wave-optical-kwseq
+  "Extra kwargs for **`transfer/distorted-wave-optical`** from **`:distorted-norm`**.
+   **`:coulomb-tail`** needs **Z1 Z2 > 0**, **E_cm**, **r_max**, **mass-factor** for **η**, **ρ = k r_max**."
   [distorted-norm E-cm r-max mf Z1 Z2]
   (let [E-cm (double E-cm)
         r-max (double r-max)
         mf (double mf)
         Z1 (long Z1)
         Z2 (long Z2)]
-    (when (and (= distorted-norm :coulomb-tail)
-               (pos? Z1) (pos? Z2) (pos? E-cm) (pos? r-max))
-      (let [k (Math/sqrt (* mf E-cm))
-            eta (* (double Z1) (double Z2) 1.44 mf (/ 1.0 (* 2.0 k)))
-            rho (* k r-max)]
-        (when (and (Double/isFinite eta) (Double/isFinite rho) (pos? k))
-          [:normalize-mode :coulomb-tail :tail-eta eta :tail-rho rho])))))
+    (case distorted-norm
+      :raw nil
+      :max [:normalize-mode :max]
+      :coulomb-tail
+      (when (and (pos? Z1) (pos? Z2) (pos? E-cm) (pos? r-max))
+        (let [k (Math/sqrt (* mf E-cm))
+              eta (* (double Z1) (double Z2) 1.44 mf (/ 1.0 (* 2.0 k)))
+              rho (* k r-max)]
+          (when (and (Double/isFinite eta) (Double/isFinite rho) (pos? k))
+            [:normalize-mode :coulomb-tail :tail-eta eta :tail-rho rho])))
+      nil)))
 
 (defn distorted-wave-entrance
   "Calculate distorted wave for entrance channel (elastic scattering).
@@ -755,9 +759,9 @@
      - :j - Total angular momentum (default: L + s)
      - :mass-factor - Mass factor (2μ/ħ²), defaults to functions/mass-factor
      - :global-set - Global potential (optional, auto-selected: :ch89 for :p/:n, :daehnick80 for :d)
-     - :distorted-norm **`:max`** (default) or **`:coulomb-tail`** — tail match **|u|** to **|H_L^+|** at **r_max**
-       (**`transfer/distorted-wave-optical`**). Use **`:coulomb-tail`** for charged channels when **dσ** from **DWBA**
-       would otherwise be tiny with **max |χ|** scaling.
+     - :distorted-norm — **`:coulomb-tail`** (default on charged branches), **`:raw`**, or **`:max`** (**`distorted-wave-optical`**).
+   
+   For **S** from **R = u/(a u′)** use **`distorted-wave-numerov-R-for-smatrix`** + **`distorted-wave-coulomb-S-from-numerov-R`** in **`dwba.transfer`**.
    
    Returns: Vector of distorted wave values χ_i(r) at each radial point
    
@@ -784,13 +788,22 @@
                             :E-lab 10.0)"
   [E-i L-i V-params h r-max & {:keys [optical-potential-fn projectile-type target-A target-Z E-lab s j mass-factor global-set
                                        W-params V-so R-so a-so coulomb-R-C distorted-norm]
-                               :or {s 0.5 distorted-norm :max}}]
+                               :or {s 0.5 distorted-norm :coulomb-tail}}]
   (cond
     ;; Use full optical potential if provided
     optical-potential-fn
     (let [j-val (or j (+ L-i s))
-          mf (or mass-factor functions/mass-factor)]
-      (transfer/distorted-wave-optical E-i L-i s j-val optical-potential-fn r-max h mf))
+          mf (or mass-factor functions/mass-factor)
+          opt-kw (case distorted-norm
+                   :max [:normalize-mode :max]
+                   :coulomb-tail
+                   (throw (ex-info
+                           "distorted-wave-entrance: :coulomb-tail needs Z₁,Z₂ for η — use WS+Coulomb branch or call transfer/distorted-wave-optical directly"
+                           {:distorted-norm distorted-norm}))
+                   nil)]
+      (if opt-kw
+        (apply transfer/distorted-wave-optical E-i L-i s j-val optical-potential-fn r-max h mf opt-kw)
+        (transfer/distorted-wave-optical E-i L-i s j-val optical-potential-fn r-max h mf)))
 
     ;; Explicit Woods–Saxon **+ Coulomb** for charged projectiles (e.g. p,p′)
     (and V-params (sequential? V-params) (>= (count V-params) 3)
@@ -802,9 +815,9 @@
           Rc (or coulomb-R-C (* 1.25 (Math/pow (double target-A) (/ 1.0 3.0))))
           U-fn (fn [r] (transfer/optical-potential-woods-saxon r V-params W-params V-so R-so a-so
                                                                L-i s j-val Z1 target-Z Rc))
-          tail-kw (coulomb-tail-norm-kwseq distorted-norm E-i r-max mf Z1 target-Z)]
-      (if tail-kw
-        (apply transfer/distorted-wave-optical E-i L-i s j-val U-fn r-max h mf tail-kw)
+          opt-kw (distorted-wave-optical-kwseq distorted-norm E-i r-max mf Z1 target-Z)]
+      (if opt-kw
+        (apply transfer/distorted-wave-optical E-i L-i s j-val U-fn r-max h mf opt-kw)
         (transfer/distorted-wave-optical E-i L-i s j-val U-fn r-max h mf)))
     
     ;; Global optical (CH89 / Daehnick) — **only** when V-params is nil
@@ -816,9 +829,9 @@
                              r projectile-type target-A target-Z E-lab L-i s j-val
                              (or kw-opts [])))
           Z1 (projectile-charge-number projectile-type)
-          tail-kw (coulomb-tail-norm-kwseq distorted-norm E-i r-max mf Z1 target-Z)]
-      (if tail-kw
-        (apply transfer/distorted-wave-optical E-i L-i s j-val U-fn r-max h mf tail-kw)
+          opt-kw (distorted-wave-optical-kwseq distorted-norm E-i r-max mf Z1 target-Z)]
+      (if opt-kw
+        (apply transfer/distorted-wave-optical E-i L-i s j-val U-fn r-max h mf opt-kw)
         (transfer/distorted-wave-optical E-i L-i s j-val U-fn r-max h mf)))
     
     ;; Fall back to simple real potential (backward compatible; **no** Coulomb)
@@ -855,8 +868,9 @@
      - :j - Total angular momentum (default: L + s)
      - :mass-factor - Mass factor (2μ/ħ²), defaults to functions/mass-factor
      - :global-set - Global potential (optional, auto-selected: :ch89 for :p/:n, :daehnick80 for :d)
-     - :distorted-norm — same as **`distorted-wave-entrance`** (**`:max`** | **`:coulomb-tail`**); exit uses **E_f**
-       for **η**, **ρ**.
+     - :distorted-norm — same as **`distorted-wave-entrance`** (uses **E_f** for tail **η**, **ρ**).
+   
+   Same **`distorted-wave-optical`** convention as **`distorted-wave-entrance`**.
    
    Returns: Vector of distorted wave values χ_f(r) at each radial point
    
@@ -883,14 +897,23 @@
                         :E-lab 5.0)"
   [E-i E-ex L-f V-params h r-max & {:keys [optical-potential-fn outgoing-type residual-A residual-Z E-lab s j mass-factor global-set
                                             W-params V-so R-so a-so coulomb-R-C distorted-norm]
-                                    :or {s 0.5 distorted-norm :max}}]
+                                    :or {s 0.5 distorted-norm :coulomb-tail}}]
   (let [E-f (- E-i E-ex)]
     (cond
       ;; Use full optical potential if provided
       optical-potential-fn
       (let [j-val (or j (+ L-f s))
-            mf (or mass-factor functions/mass-factor)]
-        (transfer/distorted-wave-optical E-f L-f s j-val optical-potential-fn r-max h mf))
+            mf (or mass-factor functions/mass-factor)
+            opt-kw (case distorted-norm
+                     :max [:normalize-mode :max]
+                     :coulomb-tail
+                     (throw (ex-info
+                             "distorted-wave-exit: :coulomb-tail needs Z₁,Z₂ for η — use WS+Coulomb branch or call transfer/distorted-wave-optical directly"
+                             {:distorted-norm distorted-norm}))
+                     nil)]
+        (if opt-kw
+          (apply transfer/distorted-wave-optical E-f L-f s j-val optical-potential-fn r-max h mf opt-kw)
+          (transfer/distorted-wave-optical E-f L-f s j-val optical-potential-fn r-max h mf)))
 
       ;; Explicit WS + Coulomb for charged ejectile
       (and V-params (sequential? V-params) (>= (count V-params) 3)
@@ -902,9 +925,9 @@
             Rc (or coulomb-R-C (* 1.25 (Math/pow (double residual-A) (/ 1.0 3.0))))
             U-fn (fn [r] (transfer/optical-potential-woods-saxon r V-params W-params V-so R-so a-so
                                                                  L-f s j-val Z1 residual-Z Rc))
-            tail-kw (coulomb-tail-norm-kwseq distorted-norm E-f r-max mf Z1 residual-Z)]
-        (if tail-kw
-          (apply transfer/distorted-wave-optical E-f L-f s j-val U-fn r-max h mf tail-kw)
+            opt-kw (distorted-wave-optical-kwseq distorted-norm E-f r-max mf Z1 residual-Z)]
+        (if opt-kw
+          (apply transfer/distorted-wave-optical E-f L-f s j-val U-fn r-max h mf opt-kw)
           (transfer/distorted-wave-optical E-f L-f s j-val U-fn r-max h mf)))
       
       ;; Global optical — only when V-params' is nil
@@ -916,9 +939,9 @@
                                r outgoing-type residual-A residual-Z E-lab L-f s j-val
                                (or kw-opts [])))
             Z1 (projectile-charge-number outgoing-type)
-            tail-kw (coulomb-tail-norm-kwseq distorted-norm E-f r-max mf Z1 residual-Z)]
-        (if tail-kw
-          (apply transfer/distorted-wave-optical E-f L-f s j-val U-fn r-max h mf tail-kw)
+            opt-kw (distorted-wave-optical-kwseq distorted-norm E-f r-max mf Z1 residual-Z)]
+        (if opt-kw
+          (apply transfer/distorted-wave-optical E-f L-f s j-val U-fn r-max h mf opt-kw)
           (transfer/distorted-wave-optical E-f L-f s j-val U-fn r-max h mf)))
       
       ;; Fall back to simple real potential (backward compatible)

@@ -98,7 +98,7 @@
         zr (t/handbook-zr-chi-exit-mass-ratio M-target M-residual)
         ell (long transfer-ell)
         phi-n (t/normalize-bound-state
-               (t/solve-bound-state-numerov -8.364 3 58.4538 4.0355 0.7 0.048 h r-max) h)
+               (t/solve-bound-state-numerov -8.364 3 58.4538 4.0355 0.7 0.048 h r-max {:no-spin-orbit true}) h)
         z12 (* 1.44 1.0 20.0)
         eta-i (sommerfeld-eta-channel e-cm-i mass-factor-i z12)
         eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)

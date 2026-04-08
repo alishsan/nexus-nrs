@@ -9,7 +9,7 @@
 
   **Amplitude:** **T_m ≈ D₀ √(2ℓ+1) β_m** and **`transfer-differential-cross-section`** → **mb/sr** (same dimensional unit as typical handbook **mb/sr** plots).
 
-  **Absolute scale (mb/sr):** depends on optical parameters, bound well, **D₀**, and how **χ** are normalized. This benchmark defaults to **`:coulomb-tail`** for **χ** (**`distorted-wave-optical`**). The optional **`:chi-normalize-mode :max`** uses peak-normalized **u** (same mode as the default in **`ca40-dwuck`** distorted waves); it does **not** guarantee closer agreement with any particular handbook figure — match **potentials, energies, and conventions** from that figure when comparing absolute **mb/sr**. For **Ca40(d,p)** vs **DWUCK4** listing scale, see **`ca40-dp-flux-scale-to-embedded-dwuck`** (flux/asymptotics, not automatically the same as this partial-wave builder).
+  **Distorted waves:** default **`:chi-normalize-mode` `:coulomb-tail`** (**|**u**| ∝ |H_L^+|** at **ρ = k r_max** per channel). Optional **`:raw`** or **`:max`**. With strong absorption, tail match can mis-scale **χ**; use **`:raw`** for relative **L** weights. Elastic **R → S** uses **`distorted-wave-numerov-R-for-smatrix`** + **`distorted-wave-coulomb-S-from-numerov-R`**. Match **potentials, energies, and conventions** from any reference figure. For **Ca40(d,p)** vs **DWUCK4** listing scale, see **`ca40-dp-flux-scale-to-embedded-dwuck`**.
 
   **Spin:** **(2J_f+1)/(2J_i+1)** for **J(¹⁶O)=0**, **J(¹⁷O)=5/2** and unpolarized deuteron **× 1/3** (same pattern as **`ca40-dp-dsigma-mb-sr`**, no extra **½** — that factor is for **(p,d)** entrance proton).
 
@@ -114,13 +114,12 @@
   "Build **{:L-alpha :L-beta :I}** with **`handbook-radial-integral-I-zr-from-neutron-bound`**.
   **φ_n** — neutron in **¹⁷O** (**l=2**, illustrative well); **χ_α** — **d** on **¹⁶O**; **χ_β** — **p** on **¹⁷O**.
 
-  **`:chi-normalize-mode`** — **`:coulomb-tail`** (default): **|u(r_max)|** matched to Coulomb Hankel.
-  **`:max`**: **`distorted-wave-optical`** default — scale **u** so peak **|u| = 1** (same mode as **`ca40-dwuck`** χ). **mb/sr** may be larger or smaller than **`:coulomb-tail`** depending on **L**, **η**, and absorption."
+  **`:chi-normalize-mode`** — **`:coulomb-tail`** (default), **`:raw`**, or **`:max`** (**`distorted-wave-optical`**)."
   [& {:keys [r-max h L-max e-cm-i transfer-ell chi-normalize-mode]
       :or {r-max 100.0 h 0.05 L-max 20 transfer-ell o16-dp-bound-ell
            chi-normalize-mode :coulomb-tail}}]
-  (when-not (#{:coulomb-tail :max} chi-normalize-mode)
-    (throw (ex-info "o16-dp-radial-I-rows-handbook: :chi-normalize-mode must be :coulomb-tail or :max"
+  (when-not (#{:raw :max :coulomb-tail} chi-normalize-mode)
+    (throw (ex-info "o16-dp-radial-I-rows-handbook: :chi-normalize-mode must be :raw, :max, or :coulomb-tail"
                     {:chi-normalize-mode chi-normalize-mode})))
   (let [e-cm-i (double (or e-cm-i (:e-cm-i (o16-dp-kinematics))))
         {:keys [mass-factor-i mass-factor-f e-cm-f k-i k-f M-target M-residual]}
@@ -128,7 +127,7 @@
         zr (t/handbook-zr-chi-exit-mass-ratio M-target M-residual)
         ell (long transfer-ell)
         phi-n (t/normalize-bound-state
-               (t/solve-bound-state-numerov -4.1438 2 56.0 2.85 0.6 0.048 h r-max) h)
+               (t/solve-bound-state-numerov -4.1438 2 56.0 2.85 0.6 0.048 h r-max {:no-spin-orbit true}) h)
         z12 (* 1.44 1.0 8.0)
         eta-i (sommerfeld-eta-channel e-cm-i mass-factor-i z12)
         eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)
@@ -137,26 +136,26 @@
         chi-alpha!
         (memoize
          (fn [^long La]
-           (if (= :max chi-normalize-mode)
+           (if (= :raw chi-normalize-mode)
              (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
                                        (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
                                        r-max h mass-factor-i)
              (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
                                        (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
                                        r-max h mass-factor-i
-                                       :normalize-mode :coulomb-tail
+                                       :normalize-mode chi-normalize-mode
                                        :tail-eta eta-i :tail-rho rho-i))))
         chi-beta!
         (memoize
          (fn [^long Lb]
-           (if (= :max chi-normalize-mode)
+           (if (= :raw chi-normalize-mode)
              (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
                                        (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
                                        r-max h mass-factor-f)
              (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
                                        (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
                                        r-max h mass-factor-f
-                                       :normalize-mode :coulomb-tail
+                                       :normalize-mode chi-normalize-mode
                                        :tail-eta eta-f :tail-rho rho-f))))]
     (vec
      (for [La (range 0 (inc (long L-max)))
@@ -194,7 +193,7 @@
 (defn o16-dp-dsigma-handbook-mb-sr
   "**dσ/dΩ (mb/sr)** — handbook **F_n**, **(5.5)** radial **I**, **`handbook-zr-multipole-amplitude-sum`**, **`transfer-differential-cross-section`**.
 
-  **`:chi-normalize-mode`** — passed to **`o16-dp-radial-I-rows-handbook`** when **`:radial-rows-sigma`** is omitted (**`:coulomb-tail`** default, **`:max`** for DWUCK-style peak-normalized χ)."
+  **`:chi-normalize-mode`** — passed to **`o16-dp-radial-I-rows-handbook`** when **`:radial-rows-sigma`** is omitted (**`:coulomb-tail`** default)."
   [theta-deg & {:keys [e-cm-i r-max h L-max S-factor radial-rows-sigma
                        coherent-m-beta? cm-asymmetry-kappa L-alpha-only chi-normalize-mode]
                 :or {r-max 100.0 h 0.05 L-max 20 S-factor 1.0

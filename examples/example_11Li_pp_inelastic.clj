@@ -11,9 +11,8 @@
 ;; **E_x ≈ 2.09 MeV** (same scale as the soft mode discussed for ¹¹Li in **`example_11Li_dd_inelastic.clj`**);
 ;; **β₂** and **V_params** are **not** fitted—adjust for serious comparisons.
 ;;
-;; **dσ/dΩ scale:** this script uses **`:distorted-norm :coulomb-tail`** so **|u|** matches **|H_L^+|** at **r_max**
-;; (same idea as **`transfer/distorted-wave-optical`**). Default **`:max`** would squash **χ** and make **DWBA**
-;; **dσ** look like **zero** on a plot. Absolute **mb/sr** still need a full flux/matching convention for fits.
+;; **dσ/dΩ scale:** **`distorted-wave-entrance`** / **`distorted-wave-exit`** default to **Coulomb-tail |u|** matching
+;; on charged **WS + Coulomb** branches (**`:distorted-norm :coulomb-tail`**). Absolute **mb/sr** still need a full flux convention for fits.
 ;;
 ;; Writes (typically gitignored):
 ;;   **output/11Li_pp_inelastic_dsigma.png** — linear **y** (tiny **mb/sr** may look like a flat “zero” line).
@@ -93,8 +92,7 @@
                                 :W-params W-params
                                 :s 0.5
                                 :j (+ L-i 0.5)
-                                :mass-factor mass-factor
-                                :distorted-norm :coulomb-tail))
+                                :mass-factor mass-factor))
 
 (def chi-f
   (inel/distorted-wave-exit E-CM E-ex L-f V-params h r-max
@@ -105,8 +103,7 @@
                             :W-params W-params
                             :s 0.5
                             :j (+ L-f 0.5)
-                            :mass-factor mass-factor
-                            :distorted-norm :coulomb-tail))
+                            :mass-factor mass-factor))
 
 ;; Transition potential on radial grid
 (def n-steps (int (/ r-max h)))

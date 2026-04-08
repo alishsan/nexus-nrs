@@ -165,7 +165,8 @@
    - E-lab: Lab energy per nucleon (MeV/nucleon)
    
    Returns: Map with {:V-params [V0 R_V a_V], :W-params [W0 R_W a_W],
-                      :V-so, :R-so, :a-so} for use with optical-potential-woods-saxon."
+                      :V-so, :R-so, :a-so} for use with optical-potential-woods-saxon.
+   **Spin–orbit:** default **V_so ≠ 0** (Thomas term on); zero it explicitly if matching a set without SO."
   [target-A E-lab]
   (let [;; Geometry (Daehnick 1980 typical values)
         rv0 1.15
@@ -178,10 +179,11 @@
         ;; Imaginary
         W0   (daehnick80-imag-depth E-lab)
         R-W  (* rw0 (Math/pow target-A (/ 1.0 3.0)))
-        ;; Spin-orbit (Daehnick typically uses small or zero spin-orbit for deuterons)
-        V-so 0.0  ; Deuterons have spin 1, but spin-orbit is typically small
-        R-so R-V
-        a-so av]
+        ;; Thomas spin–orbit on by default (deuteron OM often varies; adjust per system)
+        rso0 1.12
+        V-so 5.5
+        R-so (* rso0 (Math/pow target-A (/ 1.0 3.0)))
+        a-so 0.65]
     {:V-params [V0 R-V av]
      :W-params [W0 R-W aw]
      :V-so     V-so
