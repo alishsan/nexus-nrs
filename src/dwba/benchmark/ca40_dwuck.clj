@@ -26,7 +26,7 @@
     and **Austern Eq. (5.3)** exit-radius sampling **`:zr-chi-exit-mass-ratio` = M_Ca40/M_Ca41**.
   - **Angular:** coherent or m-sum per **`:angular-mode`**, **l_i=0**, **l_f=3**, **`:Ls`**.
 
-  **vs DWUCK4 listing:** still a **reduced** model (ZR POST, **:coulomb-tail** χ scale at **r_max**). Listing **asymmetry** needs full
+  **vs DWUCK4 listing:** still a **reduced** model (ZR POST, **`:bind-flux`** χ outer fix from **|**H⁻|** at **k r_max** — **BIND**-style **k**/flux). Listing **asymmetry** needs full
   **T** / **S** / **β** / **P_L^m** — not this benchmark alone.
 
   Optional **`:cm-asymmetry-kappa`** (default **0**) is **non-DWBA** (**1 + κ cos θ_cm**) for exploratory
@@ -35,7 +35,7 @@
   **Absolute scale (mb/sr)** — `transfer-amplitude-post` converts **u(r)=r·R(r)** to **R(r)** in the
   radial overlap. Distorted waves use **:coulomb-tail** matching at **r_max**, not unit asymptotic flux — use
   **`ca40-dp-flux-scale-to-embedded-dwuck`** when comparing to listing **Inelsig** (fm²/sr ×
-  **`dwuck-inelsig-fm2-sr->mb-sr`**). Spectroscopic **C²S** not folded (**S=1**).
+  **`dwuck-inelsig-fm2-sr->mb-sr`**); **`:bind-flux`** narrows the gap vs **`:coulomb-tail`** / **`:raw`**. Spectroscopic **C²S** not folded (**S=1**).
 
   Reference listing values are embedded in `dwba.ca40-dwuck-benchmark-test`.
 
@@ -133,8 +133,6 @@
         z12 (* 1.44 1.0 20.0)
         eta-i (ca40-dp-tail-eta e-cm-i mass-factor-i z12)
         eta-f (ca40-dp-tail-eta e-cm-f mass-factor-f z12)
-        rho-i (* k-i r-max)
-        rho-f (* k-f r-max)
         phi-f (t/normalize-bound-state
                (t/solve-bound-state-numerov -8.364 3 58.4538 4.0355 0.7 0.048 h r-max {:no-spin-orbit true}) h)
         phi-i (t/normalize-bound-state
@@ -142,13 +140,13 @@
         chi-i (t/distorted-wave-optical e-cm-i L 1.0 j-d
                                         (optical-u-deuteron-ca40 L 1.0 j-d)
                                         r-max h mass-factor-i
-                                        :normalize-mode :coulomb-tail
-                                        :tail-eta eta-i :tail-rho rho-i)
+                                        :normalize-mode :bind-flux
+                                        :bind-eta eta-i)
         chi-f (t/distorted-wave-optical e-cm-f L 0.5 j-p
                                         (optical-u-proton-ca41 L 0.5 j-p)
                                         r-max h mass-factor-f
-                                        :normalize-mode :coulomb-tail
-                                        :tail-eta eta-f :tail-rho rho-f)
+                                        :normalize-mode :bind-flux
+                                        :bind-eta eta-f)
         D0 (t/zero-range-constant :d-p)]
     (t/transfer-amplitude-post chi-i chi-f phi-i phi-f r-max h :zero-range D0
                                {:zr-chi-exit-mass-ratio zr-ratio

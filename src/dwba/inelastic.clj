@@ -704,7 +704,7 @@
 
 (defn- distorted-wave-optical-kwseq
   "Extra kwargs for **`transfer/distorted-wave-optical`** from **`:distorted-norm`**.
-   **`:coulomb-tail`** needs **Z1 Z2 > 0**, **E_cm**, **r_max**, **mass-factor** for **η**, **ρ = k r_max**."
+   **`:coulomb-tail`** / **`:bind-flux`** need **E_cm**, **r_max**, **mass-factor**; charged channels also need **Z1 Z2** for **η**."
   [distorted-norm E-cm r-max mf Z1 Z2]
   (let [E-cm (double E-cm)
         r-max (double r-max)
@@ -721,6 +721,14 @@
               rho (* k r-max)]
           (when (and (Double/isFinite eta) (Double/isFinite rho) (pos? k))
             [:normalize-mode :coulomb-tail :tail-eta eta :tail-rho rho])))
+      :bind-flux
+      (when (and (pos? E-cm) (pos? r-max))
+        (let [k (Math/sqrt (* mf E-cm))
+              eta (if (and (pos? Z1) (pos? Z2))
+                    (* (double Z1) (double Z2) 1.44 mf (/ 1.0 (* 2.0 k)))
+                    0.0)]
+          (when (and (pos? k) (Double/isFinite eta))
+            [:normalize-mode :bind-flux :bind-eta eta])))
       nil)))
 
 (defn distorted-wave-entrance
@@ -759,7 +767,7 @@
      - :j - Total angular momentum (default: L + s)
      - :mass-factor - Mass factor (2μ/ħ²), defaults to functions/mass-factor
      - :global-set - Global potential (optional, auto-selected: :ch89 for :p/:n, :daehnick80 for :d)
-     - :distorted-norm — **`:coulomb-tail`** (default on charged branches), **`:raw`**, or **`:max`** (**`distorted-wave-optical`**).
+     - :distorted-norm — **`:coulomb-tail`** (default on charged branches), **`:bind-flux`** (DWUCK **BIND**-style **k**/|**H⁻|**), **`:raw`**, or **`:max`** (**`distorted-wave-optical`**).
    
    For **S** from **R = u/(a u′)** use **`distorted-wave-numerov-R-for-smatrix`** + **`distorted-wave-coulomb-S-from-numerov-R`** in **`dwba.transfer`**.
    

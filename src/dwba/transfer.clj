@@ -8,8 +8,9 @@
    R-matrix match lives only in **`functions/s-matrix`** — same quotient as **`functions/s-matrix0`**, with
    **`Hankel±`** when **η ≠ 0**. **Do not** define **S^n** by dividing some **“full”** amplitude by **e^{2iσ}**
    (that was a bad **M_L** convention). Coulomb **σ_L** for **(3.1.88)** belongs in **`functions/partial-wave-exp2sigma-Sn-minus-one`**
-   / **`e^{2iσ}(S^n−1)`** only. **`distorted-wave-optical`** integrates reduced **Numerov u**; optional **`:normalize-mode`**
-   (**`:raw`** default — no rescaling) or **`:max`** (peak **|**u|**). Do **not** use **`:max`** when summing many partial waves:
+   / **`e^{2iσ}(S^n−1)`** only.    **`distorted-wave-optical`** integrates reduced **Numerov u** **without** intermediate radial rescaling: joint
+   rescales would inject a **different arbitrary factor per L**, breaking **`:raw`** relative strength across partial
+   waves when downstream uses **|u(r)|**. Post modes include **`:bind-flux`** (DWUCK **BIND**-style **u ← u · |H⁻|/(k r)** at outer grid), **`:coulomb-tail`**, **`:raw`**, **`:max`**. Use **`functions/r-matrix-complex-imag-ws`** for **`numerov-append-and-renormalize`** when only **R → S** is needed. Do **not** use **`:max`** when summing many partial waves:
    rescaling each **L** to unit peak wrecks relative **L** weights and can erase angular structure. **`:coulomb-tail`**
    matches **|**u**|∝|H^+|** at **r_max** (needs **`:tail-eta`**, **`:tail-rho`**) but can diverge with strong absorption.
    It does **not** reproduce the full elastic **R-matrix → S** step; for the same
@@ -3534,12 +3535,17 @@
 (defn distorted-wave-optical
   "Reduced radial **u = r χ** (complex Numerov); DWBA uses **R = u/r**.
 
-   **`:normalize-mode`** (default **`:raw`**): **`:raw`** — no rescaling (preserves relative strength between partial waves when you sum many **L**). **`:max`** — scale **u** so **max |u| = 1** on the grid (**not** DWUCK’s unit incoming-flux convention; see **`ca40-dp-flux-scale-to-embedded-dwuck`** / comments on max vs flux). **`:coulomb-tail`** — **|**u**|∝|H_L^+|** vs **ρ = `:tail-rho`**, **η = `:tail-eta`** at the last sample (unsafe with heavy absorption).
+   No intermediate **|u|** joint rescale on the grid: that would multiply each partial wave by a different overall factor
+   and spoil **`:raw`** cross-**L** amplitudes (rescaling cancels in **R = u/(a u′)** but not in stored **u(r)**). Elastic
+   **S**-only paths can use **`functions/r-matrix-complex-imag-ws`** (**`numerov-append-and-renormalize`** there).
+
+   **`:normalize-mode`** (default **`:raw`**): **`:raw`** — no post-rescaling (preserves relative strength between partial waves when you sum many **L**). **`:max`** — scale **u** so **max |u| = 1** on the grid (**not** DWUCK’s unit incoming-flux convention). **`:coulomb-tail`** — **|**u**|∝|H_L^+|** vs **ρ = `:tail-rho`**, **η = `:tail-eta`** at the last sample (unsafe with heavy absorption). **`:bind-flux`** — DWUCK **`BIND`**-style outer fix (**`FNORM = k/SCALE`**, **F2 = 1**): **SCALE = |H⁻(L,η, k r_last)|**,
+   then **u(r_i) ← u(r_i) · SCALE/(k r_i)** for **i ≥ 1** (**u(0)=0**). Pass **`:bind-eta`** (Sommerfeld **η** for the channel; **0** if neutral). Omits the full double-interval **DET** match in **`BIND`**; use for DWUCK-like flux scaling vs **`:raw`**.
 
    For the elastic **R → S** quotient, use **`distorted-wave-numerov-R-for-smatrix`** + **`distorted-wave-coulomb-S-from-numerov-R`**."
   [E l s j optical-potential-fn r-max h mass-factor
-   & {:keys [normalize-mode tail-eta tail-rho]
-      :or {normalize-mode :raw}}]
+   & {:keys [normalize-mode tail-eta tail-rho bind-eta]
+      :or {normalize-mode :raw bind-eta 0.0}}]
   (let [steps (int (/ r-max h))
         u0 (complex-cartesian 0.0 0.0)
         u1-init (Math/pow h (inc l))
@@ -3583,10 +3589,31 @@
                         :raw 1.0
                         :max max-factor
                         :coulomb-tail (or tail-norm max-factor)
+                        :bind-flux 1.0
                         1.0)]
-      (mapv (fn [u]
-              (mul (complex-cartesian (double norm-factor) 0.0) u))
-            results))))
+      (cond
+        (= normalize-mode :bind-flux)
+        (let [k (Math/sqrt (* (double mass-factor) (double E)))
+              eta-b (double bind-eta)
+              n (count results)
+              i-last (dec n)
+              r-last (* (double h) (double i-last))
+              rho-m (* k r-last)
+              scale (max 1e-300
+                         (double (mag (Hankel- (long l) eta-b rho-m))))]
+          (mapv (fn [i u]
+                  (if (zero? (long i))
+                    u
+                    (let [ri (* (double h) (double i))
+                          fac (/ scale (* k ri))]
+                      (mul (complex-cartesian fac 0.0) u))))
+                (range n)
+                results))
+
+        :else
+        (mapv (fn [u]
+                (mul (complex-cartesian (double norm-factor) 0.0) u))
+              results)))))
 
 (defn optical-potential-summary
   "Get summary of optical potential parameters.

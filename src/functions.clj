@@ -524,6 +524,53 @@
                        denominator)]
     (c/div numerator denominator')))
 
+(def ^:private numerov-renorm-mag-lo
+  "If **max |u|** on the integrated samples falls below this, multiply **every** **u** by the same factor (**R = u/(a u′)** unchanged)."
+
+  1e-200)
+
+(def ^:private numerov-renorm-mag-hi
+  "If **max |u|** exceeds this, scale the whole solution vector down jointly."
+
+  1e200)
+
+(defn numerov-append-and-renormalize
+  "Append **u-next** to the Numerov **u** vector and keep **max |u|** inside **[lo, hi]** by multiplying
+  **all** samples by one real factor when needed. The reduced equation **u″ = f(r) u** is linear in **u**
+  (Coulomb only in **V**), so **u/(a u′)** is unchanged by a joint rescale.
+
+  Use only where **S** (or **R**) is the goal: repeated rescales accumulate a different factor per integration, which
+  breaks meaningful **|**u(r)**|** / cross-**L** scaling for DWBA **`:raw`** waves. **`distorted-wave-optical`** omits this on purpose.
+
+  **magmx** is the running **max |u|** before **u-next** is appended. Returns **`[u-vec′ magmx′]`** after any rescale."
+  ([u-vec u-next magmx]
+   (numerov-append-and-renormalize u-vec u-next numerov-renorm-mag-lo numerov-renorm-mag-hi magmx))
+  ([u-vec u-next lo hi magmx]
+   (let [lo (double lo)
+         hi (double hi)
+         magmx (double magmx)
+         u-vec' (conj u-vec u-next)
+         magmx' (Math/max magmx (double (c/mag u-next)))]
+     (cond
+       (or (Double/isNaN magmx') (Double/isInfinite magmx'))
+       [u-vec' magmx']
+
+       (zero? magmx')
+       [u-vec' magmx']
+
+       (> magmx' hi)
+       (let [fac (/ hi magmx')]
+         [(mapv #(c/mul (c/complex-cartesian fac 0.0) %) u-vec')
+          hi])
+
+       (< magmx' lo)
+       (let [fac (/ lo magmx')]
+         [(mapv #(c/mul (c/complex-cartesian fac 0.0) %) u-vec')
+          lo])
+
+       :else
+       [u-vec' magmx']))))
+
 (defn xi ;h-bar and speed of light c are set to 1
   [^double E V  ^double a ^long L]  ;no coulomb ;construct R-matrix * a depending on 1D Woods-Saxon potential V(R) = -V0/(1+exp ((r-R0)/a0)) V = [V0, R0, a0]
 ;choose u(0) = 0, u'(0) = 1 for initial conditions
@@ -874,6 +921,37 @@ precision 0.00001]
   ^double [^long L ^double eta]
   (double (c/arg (apply c/complex-cartesian (spec/gamma-complex (v/vec2 (inc (double L)) eta))))))
 
+(defn coulomb-phase-diff
+  "**e^{2i(σ_L − σ_0)}** as a product of **L** simple complex ratios — **no Gamma evaluations**.
+
+  **σ_L − σ_0 = Σ_{k=1}^{L} arg(k+iη)**, so **e^{2i(σ_L−σ_0)} = ∏_{k=1}^{L} (k+iη)/(k−iη)** (each factor is a pure phase of magnitude 1). Returns **1+0i** for **L = 0**.
+
+  Note: the conjugate **∏(k−iη)/(k+iη)** = **e^{2i(σ_0−σ_L)}** arises in some references that define **σ** with the opposite sign or treat attractive Coulomb (**η < 0**) as the repulsive baseline."
+  [^long L ^double eta]
+  (loop [acc (c/complex-cartesian 1.0 0.0)
+         k   (long 1)]
+    (if (> k (long L))
+      acc
+      (let [norm-sq (+ (* (double k) (double k)) (* eta eta))]
+        (recur (c/mul acc (c/complex-cartesian (/ (- (* (double k) (double k)) (* eta eta)) norm-sq)
+                                               (/ (* 2.0 (double k) eta) norm-sq)))
+               (inc k))))))
+
+(defn coulomb-amplitude-tilde
+  "**f̃_C(θ) = e^{−2iσ_0} f_C(θ)** (**fm**): Coulomb amplitude with the global **σ_0** phase removed.
+
+  **f̃_C = −η/(2k sin²(θ/2)) · exp(−iη ln sin²(θ/2))** — no Gamma evaluations.
+
+  Use together with **`coulomb-phase-diff`** to form **|f_C + f_N|² = |f̃_C + f̃_N|²**, where
+  **f̃_N = Σ_{L=0}^{L_max} (−i/k)(2L+1) P_L · e^{2i(σ_L−σ_0)} · (S^n_L − 1)**
+  and **e^{2i(σ_L−σ_0)}** = **`coulomb-phase-diff`** (pure product, no Gamma)."
+  [^double theta-rad ^double eta ^double k]
+  (let [s2    (Math/sin (* 0.5 theta-rad))
+        sinsq (max (* s2 s2) 1e-300)
+        mag   (/ (Math/abs eta) (* 2.0 k sinsq))
+        phase (* -1.0 eta (Math/log sinsq))]
+    (c/complex-polar (+ phase Math/PI) mag)))
+
 (defn channel-sommerfeld-eta
   "**η(E)** for current **`mass-factor`** (2μ/ℏ² in 1/(MeV·fm²)) and **`Z1Z2ee`** (MeV·fm), matching **`s-matrix`**:
   **k = √(mass-factor·E)**, **η = Z₁Z₂e² · mass-factor / (2k)**. **E** = CM energy (MeV).
@@ -917,7 +995,8 @@ precision 0.00001]
 
   Older explicit stepping on **u″ = f(r) u** spoiled **u** at large **L** for typical **dr** (**NaN `s-matrix`**
   beyond **L ≈ 45**), so elastic codes silently dropped high partial waves and **dσ/dΩ** plots looked **jagged**.
-  This uses complex **Numerov** (**`numerov-step-complex`**) on a grid whose last **u** step lands at **a**."
+  This uses complex **Numerov** (**`numerov-step-complex`**) on a grid whose last **u** step lands at **a**,
+  with **`numerov-append-and-renormalize`** so **|**u**|** does not under/overflow along **r** (**R** invariant)."
   [E V a L w-vec]
   (let [E (double E)
         a (double a)
@@ -946,8 +1025,10 @@ precision 0.00001]
                  rs)
         u0 (c/complex-cartesian 0.0 0.0)
         u1 (c/complex-cartesian (Math/pow h (inc L)) 0.0)
+        magmx0 (Math/max (double (c/mag u0)) (double (c/mag u1)))
         ;; Build **u_0 … u_N** on **r = 0, h, …, N h = a** (**N = n-intervals**).
-        results (loop [res [u0 u1]]
+        results (loop [res [u0 u1]
+                       mag-mx magmx0]
                   (if (= (count res) (inc n-intervals))
                     res
                     (let [n (dec (count res))
@@ -956,8 +1037,9 @@ precision 0.00001]
                           fn-1 (get fs (dec n))
                           fn (get fs n)
                           fn+1 (get fs (inc n))
-                          unp1 (numerov-step-complex-guarded un un-1 fn-1 fn fn+1 h)]
-                      (recur (conj res unp1)))))
+                          unp1 (numerov-step-complex-guarded un un-1 fn-1 fn fn+1 h)
+                          [res' mag-mx'] (numerov-append-and-renormalize res unp1 mag-mx)]
+                      (recur res' mag-mx'))))
         u-at-a (peek results)
         u-prev (get results (- (count results) 2))
         u-2 (get results (- (count results) 3))
@@ -1073,6 +1155,17 @@ precision 0.00001]
                   (c/div (c/subt2 (Hankel- L eta rho) (c/mul rho R (deriv Hankel- L eta rho d-rho)))
                          (c/subt2 (Hankel+ L eta rho) (c/mul rho R (deriv Hankel+ L eta rho d-rho)))))))
 
+;; When bound to **`(fn [E-cm V-params L] ...)`** returning complex **S_L^n**, **`differential-cross-section`** /
+;; **`elastic-nuclear-amplitude-fn`** / **`total-cross-section`** / **`ftheta-L`** use it instead of **`s-matrix`**.
+;; Nil = default **`s-matrix`**. (Plain **IFn** only — **`with-redefs`** on **`s-matrix`** fails: primitive **`IFn`**.)
+(def ^:dynamic *partial-wave-s-matrix-fn* nil)
+
+(defn- s-matrix-for-partial-wave-sum
+  [E-cm V L]
+  (if *partial-wave-s-matrix-fn*
+    (*partial-wave-s-matrix-fn* E-cm V L)
+    (s-matrix E-cm V L)))
+
 (defn phase-shift
   "Same as **`phase-shift0`**: **½ arg(S_L^n)** with **S_L^n = `s-matrix`** (no added **σ**)."
   ([^double E V ^long L]
@@ -1097,7 +1190,7 @@ precision 0.00001]
         eta (channel-sommerfeld-eta E)
         sig (coulomb-sigma-L L eta)
         e2is (c/complex-polar (* 2.0 sig) 1.0)
-        S-L-n (s-matrix E V L)
+        S-L-n (s-matrix-for-partial-wave-sum E V L)
         bracket (partial-wave-exp2sigma-Sn-minus-one S-L-n e2is)]
     (c/mul (c/div (c/complex-cartesian 0 -1) k)
            (inc (* 2 L))
@@ -1125,7 +1218,10 @@ precision 0.00001]
   Fourth arg is either:
   - a long/int L-max: sum L = 0 … L-max (legacy);
   - a collection of non-negative longs: sum only those L (e.g. main-page angular momenta).
-  Partial waves whose **`s-matrix`** or amplitude is non-finite (NaN/Inf from Coulomb U/Hankel at
+  Optional **`binding [*`partial-wave-s-matrix-fn*` (fn [E V L] ...)]`** supplies **S_L^n** (e.g. Numerov **R**
+  → **S**) instead of **`s-matrix`**.
+
+  Partial waves whose **`s-matrix`** / override or amplitude is non-finite (NaN/Inf from Coulomb U/Hankel at
   extreme L, η, ρ) are omitted so the sum stays finite; extend L only when numerics are stable."
   [E-cm ws-params theta-cm L-spec]
   (let [k (m/sqrt (* mass-factor E-cm))
@@ -1137,7 +1233,7 @@ precision 0.00001]
         (fn [^long L]
           (let [sig (coulomb-sigma-L L eta)
                 e2is (c/complex-polar (* 2.0 sig) 1.0)
-                S-L-n (s-matrix E-cm ws-params L)
+                S-L-n (s-matrix-for-partial-wave-sum E-cm ws-params L)
                 bracket (partial-wave-exp2sigma-Sn-minus-one S-L-n e2is)
                 f-L (c/mul (c/div (c/complex-cartesian 0 -1) k)
                            (inc (* 2 L))
@@ -1180,7 +1276,7 @@ precision 0.00001]
         (fn [^long L]
           (let [sig (coulomb-sigma-L L eta)
                 e2is (c/complex-polar (* 2.0 sig) 1.0)
-                S-L-n (s-matrix E-cm ws-params L)
+                S-L-n (s-matrix-for-partial-wave-sum E-cm ws-params L)
                 bracket (partial-wave-exp2sigma-Sn-minus-one S-L-n e2is)
                 f-L (c/mul (c/div (c/complex-cartesian 0 -1) k)
                            (inc (* 2 L))
@@ -1224,7 +1320,7 @@ precision 0.00001]
         total-sigma
         (reduce +
           (for [L (range 0 (inc L-max))]
-            (let [S-L-n (s-matrix E-cm ws-params L)
+            (let [S-L-n (s-matrix-for-partial-wave-sum E-cm ws-params L)
                   ;; Cross-section contribution for this L
                   sigma-L (* (/ 2 E-cm) Math/PI (inc (* 2 L))
                              (Math/pow (c/mag (c/subt 1.0 S-L-n)) 2))]

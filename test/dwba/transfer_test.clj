@@ -685,6 +685,20 @@
         d (max-abs-diff-complex S-num S-ref)]
     (is (< d 1e-9) (format "|ΔS| max re/im = %s" d))))
 
+(deftest distorted-wave-optical-bind-flux-normalizes-without-nan-test
+  (testing ":bind-flux applies u_i *= |H⁻|/(k r_i), i≥1; u(0)=0"
+    (let [U-fn (fn [r] (t/optical-potential-entrance-channel r :p 16 8 10.0 1 0.5 1.5))
+          mf (double mass-factor)
+          k (Math/sqrt (* mf 10.0))
+          eta (* 1.0 8.0 1.44 mf (/ 1.0 (* 2.0 k)))
+          raw (t/distorted-wave-optical 10.0 1 0.5 1.5 U-fn 5.0 0.02 mf :normalize-mode :raw)
+          bf (t/distorted-wave-optical 10.0 1 0.5 1.5 U-fn 5.0 0.02 mf
+                                       :normalize-mode :bind-flux :bind-eta eta)]
+      (is (< (double (mag (first bf))) 1e-20))
+      (is (every? #(Double/isFinite (double (mag %))) bf))
+      (is (not= (double (mag (last raw))) (double (mag (last bf))))
+          "bind-flux changes tail scale vs :raw"))))
+
 (deftest distorted-wave-optical-basic-test
   (testing "Distorted wave with optical potential basic calculation"
     (let [U-fn (fn [r] (t/optical-potential-entrance-channel r :p 16 8 10.0 1 0.5 1.5))
