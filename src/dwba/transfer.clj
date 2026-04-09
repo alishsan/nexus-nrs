@@ -3204,43 +3204,53 @@
   ([r V-params W-params]
    (optical-potential-woods-saxon r V-params W-params nil nil nil nil nil nil nil nil nil))
   ([r V-params W-params V-so R-so a-so l s j Z1 Z2 R-C]
+   (optical-potential-woods-saxon r V-params W-params nil V-so R-so a-so l s j Z1 Z2 R-C))
+  ([r V-params W-vol-params W-surf-params V-so R-so a-so l s j Z1 Z2 R-C]
    (let [;; Real Woods-Saxon potential: -V0/(1+exp((r-R_V)/a_V))
          [V0 R-V a-V] V-params
          f-V (/ 1.0 (+ 1.0 (Math/exp (/ (- r R-V) a-V))))
          V-real (* -1.0 V0 f-V)
-         
-         ;; Imaginary Woods-Saxon potential: -iW0/(1+exp((r-R_W)/a_W))
-         W-imag (if W-params
-                 (let [[W0 R-W a-W] W-params
+
+         ;; Volume imaginary WS: -i W0 f(r)
+         W-vol (if W-vol-params
+                 (let [[W0 R-W a-W] W-vol-params
                        f-W (/ 1.0 (+ 1.0 (Math/exp (/ (- r R-W) a-W))))]
                    (* -1.0 W0 f-W))
                  0.0)
-         
-         ;; Spin-orbit coupling: V_so · (l·s) · f_so(r)
-         ;; (l·s) = (j(j+1) - l(l+1) - s(s+1))/2
+
+         ;; Surface imaginary WS (derivative form): -i W_D · 4 f(r)(1-f(r))
+         ;; d/dr[1/(1+e^x)] = -f(1-f)/a, so 4a df/dr = -4f(1-f).
+         ;; Absorptive convention: Im[U] < 0 → add -4 W_D f(1-f).
+         W-surf (if W-surf-params
+                  (let [[WD R-S a-S] W-surf-params
+                        f-S (/ 1.0 (+ 1.0 (Math/exp (/ (- r R-S) a-S))))]
+                    (* -4.0 WD f-S (- 1.0 f-S)))
+                  0.0)
+
+         ;; Total imaginary
+         W-imag (+ W-vol W-surf)
+
+         ;; Spin-orbit: V_so · (l·s) · (1/r) d/dr f_so(r)
          V-so-term (if (and V-so R-so a-so l s j)
-                    (if (zero? r)
-                      0.0  ; Spin-orbit term is zero at r=0
-                      (let [f-so (/ 1.0 (+ 1.0 (Math/exp (/ (- r R-so) a-so))))
-                            ;; Derivative of f-so for spin-orbit form factor
-                            df-so-dr (/ (* f-so (- 1.0 f-so)) a-so)
-                            l-dot-s (/ (- (* j (+ j 1.0))
-                                         (* l (+ l 1.0))
-                                         (* s (+ s 1.0)))
-                                      2.0)
-                            V-so-radial (* V-so l-dot-s df-so-dr (/ 1.0 r))]
-                        V-so-radial))
-                    0.0)
-         
-         ;; Coulomb potential: Z1*Z2*e²/r for r > R_C, else Z1*Z2*e²*(3 - r²/R_C²)/(2*R_C)
+                     (if (zero? r)
+                       0.0
+                       (let [f-so (/ 1.0 (+ 1.0 (Math/exp (/ (- r R-so) a-so))))
+                             df-so-dr (/ (* f-so (- 1.0 f-so)) a-so)
+                             l-dot-s (/ (- (* j (+ j 1.0))
+                                           (* l (+ l 1.0))
+                                           (* s (+ s 1.0)))
+                                        2.0)]
+                         (* V-so l-dot-s df-so-dr (/ 1.0 r))))
+                     0.0)
+
+         ;; Coulomb: uniform sphere with radius R-C
          V-coulomb (if (and Z1 Z2 R-C)
-                    (let [Z1Z2e2 (* Z1 Z2 1.44)]  ; e² = 1.44 MeV·fm
-                      (if (> r R-C)
-                        (/ Z1Z2e2 r)
-                        (* Z1Z2e2 (/ (- 3.0 (/ (* r r) (* R-C R-C))) (* 2.0 R-C)))))
-                   0.0)
-         
-         ;; Total potential: V_real + i*W_imag + V_so + V_coulomb
+                     (let [Z1Z2e2 (* Z1 Z2 1.44)]
+                       (if (> r R-C)
+                         (/ Z1Z2e2 r)
+                         (* Z1Z2e2 (/ (- 3.0 (/ (* r r) (* R-C R-C))) (* 2.0 R-C)))))
+                     0.0)
+
          total-real (+ V-real V-so-term V-coulomb)]
      (complex-cartesian total-real W-imag))))
 

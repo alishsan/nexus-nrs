@@ -21,7 +21,9 @@
             [incanter.core :as i]
             [incanter.charts :as c]
             [clojure.java.io :as io])
-  (:import [org.jfree.chart.axis LogAxis]))
+  (:import [org.jfree.chart.axis LogAxis]
+           [org.apache.commons.math3.analysis.interpolation SplineInterpolator]
+           [org.apache.commons.math3.analysis UnivariateFunction]))
 
 (defn- clamp-pos-for-log ^double [^double y]
   (if (or (Double/isNaN y) (Double/isInfinite y) (<= y 0.0))
@@ -168,44 +170,56 @@
         (println (format "  %5.1f°  %14.4e  %14.4e  %14.4e" theta-deg fc-sq tilde-sq ref-sq)))))
   (println ""))
 
-(let [h 0.08
-      r-max 100.0
-      L-max 18
-      angles-deg (range 0.0 181.0 5.0)
-      curve (oh/o16-dp-angular-curve-handbook-mb-sr
-             angles-deg :h h :r-max r-max :L-max L-max)
-      sigma-vec (mapv :differential_cross_section_mb_sr curve)
-      s0 (:differential_cross_section_mb_sr
-          (first (oh/o16-dp-angular-curve-handbook-mb-sr [0.0] :h h :r-max r-max :L-max L-max)))
-      s70 (:differential_cross_section_mb_sr
-           (first (oh/o16-dp-angular-curve-handbook-mb-sr [70.0] :h h :r-max r-max :L-max L-max)))]
+(defn- spline-smooth
+  "Fit a cubic spline through [xs ys] and evaluate at `x-fine` (seq of doubles).
+  Values below `floor` are clamped to `floor` (avoids negative spline artefacts)."
+  [xs ys x-fine & {:keys [floor] :or {floor 1e-30}}]
+  (let [spline (.interpolate (SplineInterpolator.)
+                             (double-array xs)
+                             (double-array ys))
+        xlo    (double (first xs))
+        xhi    (double (last  xs))]
+    (mapv (fn [^double x]
+            (let [xc (max xlo (min xhi x))]
+              (max floor (.value spline xc))))
+          x-fine)))
+
+(let [h          0.08
+      r-max      100.0
+      L-max      18
+      ;; Compute DWBA at 2° spacing (raw points)
+      angles-deg (vec (range 0.0 181.0 2.0))
+      curve      (oh/o16-dp-angular-curve-handbook-mb-sr
+                  angles-deg :h h :r-max r-max :L-max L-max)
+      sigma-raw  (mapv :differential_cross_section_mb_sr curve)
+      ;; Spline through log(σ) for a smooth physical curve
+      th-fine    (range 0.0 180.5 0.5)
+      sigma-fine (let [log-sig (mapv #(Math/log (max % 1e-30)) sigma-raw)]
+                   (mapv #(Math/exp %) (spline-smooth angles-deg log-sig th-fine)))
+      s0         (first sigma-raw)
+      s70        (double (nth sigma-raw (int (/ 70.0 2.0)) 0.0))]
   (println "=== dσ/dΩ (mb/sr, CM) — incoherent Σ_m |T_m|²; χ :coulomb-tail norm (handbook default) ===")
-  (println (format "  Grid: h=%.3f fm, r_max=%.1f fm, L_max=%d" h r-max L-max))
+  (println (format "  Grid: h=%.3f fm, r_max=%.1f fm, L_max=%d  (raw 2°, spline 0.5°)" h r-max L-max))
   (println (format "  dσ/dΩ(0°)  ≈ %.6e mb/sr" s0))
   (println (format "  dσ/dΩ(70°) ≈ %.6e mb/sr" s70))
-  (println "  Absolute mb/sr vs a handbook figure requires matching optics, CM energy, and conventions;")
-  (println "  optional :chi-normalize-mode :coulomb-tail | :raw | :max on o16-dp-handbook (see transfer/distorted-wave-optical).")
-  (println "")
-  (println "Optical model: Ca40-listing-like depths, radii scaled to A≈16–17, Z=8 (`o16-dp-handbook` docstring).")
-  (println "Bound neutron in 17O: l=2, E≈−4.14 MeV, illustrative Woods–Saxon [56, 2.85, 0.6] MeV/fm.")
+  (println "  Optical model: handbook Table 5.1 (d+16O); p+17O still uses scaled Ca40 parameters.")
   (println "")
 
   (try
     (let [_ (io/make-parents (io/file "output/16Odp_dcs.png"))
-          th (vec angles-deg)
-          chart (c/xy-plot th sigma-vec
-                           :title "16O(d,p)17O — Handbook ZR multipole"
+          chart (c/xy-plot (vec th-fine) sigma-fine
+                           :title "¹⁶O(d,p)¹⁷O — Handbook ZR (spline)"
                            :x-label "θ_CM (deg)"
                            :y-label "dσ/dΩ (mb/sr)"
-                           :series-label "o16-dp-handbook"
+                           :series-label "o16-dp (spline)"
                            :legend true)]
       (i/save chart "output/16Odp_dcs.png" :width 800 :height 500)
       (println "Plot saved: output/16Odp_dcs.png")
-      (let [chart-log (-> (c/xy-plot th (series-for-log sigma-vec)
-                                     :title "16O(d,p)17O — Handbook ZR (log y)"
+      (let [chart-log (-> (c/xy-plot (vec th-fine) (series-for-log sigma-fine)
+                                     :title "¹⁶O(d,p)¹⁷O — Handbook ZR (log y, spline)"
                                      :x-label "θ_CM (deg)"
-                                     :y-label "dσ/dΩ (mb/sr), logarithmic"
-                                     :series-label "o16-dp-handbook"
+                                     :y-label "dσ/dΩ (mb/sr), log₁₀"
+                                     :series-label "o16-dp (spline)"
                                      :legend true)
                          (chart-set-log-range-y! "dσ/dΩ (mb/sr)"))]
         (i/save chart-log "output/16Odp_dcs_log.png" :width 800 :height 500)
