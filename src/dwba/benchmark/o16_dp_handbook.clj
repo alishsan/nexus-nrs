@@ -57,27 +57,46 @@
 (defn- r0-sc ^double [^double r-ca ^double a ^double b]
   (* r-ca (Math/pow (/ a b) (/ 1.0 3.0))))
 
+(defn- a16 ^double [] (Math/pow 16.0 (/ 1.0 3.0)))
+
 (defn optical-u-deuteron-o16
-  "Woods–Saxon **d + ¹⁶O**: depths from Ca40(d) listing, **R** radii scaled **(16/40)^{1/3}**, **Z2=8**."
+  "Woods–Saxon **d + ¹⁶O**: Table 5.1 from the handbook, **10 MeV/u** (E_lab = 20 MeV deuteron).
+  Radii **R = r₀ × 16^{1/3}**: real V = 88.955, r₀ = 1.149, a = 0.751;
+  volume imaginary Wi = 2.348, r₀i = 1.345, ai = 0.603;
+  surface imaginary Ws = 10.218, r₀s = 1.397, as = 0.687 (derivative WS: −4Wsf(1−f));
+  spin–orbit Vso = 3.557, r₀so = 0.972, aso = 1.011; Coulomb Rc = 1.303 × 16^{1/3}."
   [L s j]
   (let [z1 1 z2 8
-        rc (r0-sc 4.7879 16 40)]
+        a16 (a16)
+        rc (* 1.303 a16)]
     (fn [^double r]
       (t/optical-potential-woods-saxon r
-                                       [97.4 (r0-sc 3.803 16 40) 0.875]
-                                       [70.0 (r0-sc 5.342 16 40) 0.477]
-                                       nil nil nil L s j z1 z2 rc))))
+                                       [88.955  (* 1.149 a16)  0.751]   ; real WS
+                                       [2.348   (* 1.345 a16)  0.603]   ; volume imaginary
+                                       [10.218  (* 1.397 a16)  0.687]   ; surface imaginary
+                                       3.557 (* 0.972 a16) 1.011       ; spin-orbit
+                                       L s j z1 z2 rc))))
+
+(defn- a17 ^double [] (Math/pow 17.0 (/ 1.0 3.0)))
 
 (defn optical-u-proton-o17
-  "Woods–Saxon **p + ¹⁷O**: Ca41(p) block scaled **(17/41)^{1/3}** for radii, **Z2=8**."
+  "Woods–Saxon **p + ¹⁷O**: Table 5.2 from the handbook, **10 MeV/u** context.
+  Radii **R = r₀ × 17^{1/3}**: real V = 49.544, r₀ = 1.146, a = 0.675;
+  volume imaginary Vi = 2.061, same r₀ and a as real;
+  surface imaginary Vs = 7.670, r₀s = 1.302, as = 0.528 (derivative WS: −4Vsf(1−f));
+  spin–orbit Vso = 5.296 (real part; Im = 0.106 neglected), r₀so = 0.934, aso = 0.590;
+  Coulomb Rc = 1.419 × 17^{1/3}."
   [L s j]
   (let [z1 1 z2 8
-        rc (r0-sc 4.3103 17 41)]
+        a17 (a17)
+        rc  (* 1.419 a17)]
     (fn [^double r]
       (t/optical-potential-woods-saxon r
-                                       [49.47 (r0-sc 4.0689 17 41) 0.70]
-                                       [19.8 (r0-sc 4.3172 17 41) 0.75]
-                                       24.2 (r0-sc 4.0689 17 41) 0.70 L s j z1 z2 rc))))
+                                       [49.544 (* 1.146 a17) 0.675]  ; real WS
+                                       [2.061  (* 1.146 a17) 0.675]  ; volume imaginary
+                                       [7.670  (* 1.302 a17) 0.528]  ; surface imaginary
+                                       5.296 (* 0.934 a17) 0.590    ; spin-orbit (real)
+                                       L s j z1 z2 rc))))
 
 (defn- deuteron-j-for-partial-wave
   ^double [^long L]

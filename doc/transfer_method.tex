@@ -1,0 +1,705 @@
+% ============================================================
+%  transfer_method.tex
+%  Documentation for the DWBA transfer reaction method
+%  implemented in nexus-nrs (dwba.transfer namespace).
+% ============================================================
+\documentclass[12pt,a4paper]{article}
+
+\usepackage{amsmath,amssymb,bm}
+\usepackage{physics}        % \bra, \ket, \mel etc.
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\newcommand{\fm}{\,\mathrm{fm}}
+\newcommand{\MeV}{\,\mathrm{MeV}}
+\newcommand{\sr}{\,\mathrm{sr}}
+\newcommand{\mb}{\,\mathrm{mb}}
+
+\title{Distorted-Wave Born Approximation (DWBA)\\
+       for Single-Nucleon Transfer Reactions\\[0.5em]
+       \large Method documentation for \texttt{nexus-nrs}}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Overview}
+% ============================================================
+
+This document describes the formulas implemented in the
+\texttt{dwba.transfer} namespace of \texttt{nexus-nrs}, with particular
+emphasis on the one-nucleon stripping reaction
+${}^{16}\mathrm{O}(d,p){}^{17}\mathrm{O}$.  The principal
+ingredients are:
+
+\begin{enumerate}
+  \item Non-relativistic kinematics (CM energies, wave-numbers, Q-value).
+  \item Bound-state wave function of the transferred nucleon.
+  \item Complex optical-model distorted waves for both channels.
+  \item S-matrix extraction, Coulomb phase shifts, and elastic scattering.
+  \item Zero-range DWBA (ZR-DWBA) transfer amplitude and differential
+        cross-section.
+\end{enumerate}
+
+Units throughout: lengths in $\fm$, energies in $\MeV$, and
+$\hbar c = 197.7\MeV\fm$.
+
+% ============================================================
+\section{Kinematics}
+% ============================================================
+
+\subsection{Laboratory–to–CM energy}
+
+For a projectile of mass $m_1$ hitting a target of mass $m_2$ at rest,
+\begin{equation}
+  E_\mathrm{cm} = E_\mathrm{lab}\,\frac{m_2}{m_1+m_2}.
+  \label{eq:lab-cm-energy}
+\end{equation}
+
+\subsection{Reduced mass and mass factor}
+
+The two-body reduced mass is
+\begin{equation}
+  \mu = \frac{m_1 m_2}{m_1+m_2}.
+\end{equation}
+Because the radial Schrödinger equation is written in the form
+$u'' = f(r)\,u$, the convenient combination
+\begin{equation}
+  \xi \equiv \frac{2\mu}{(\hbar c)^2}
+  \label{eq:mass-factor}
+\end{equation}
+appears everywhere.  In the code this quantity is called
+\texttt{mass-factor} (units: $\MeV^{-1}\fm^{-2}$).
+
+\subsection{Wave-numbers}
+
+The CM wave-number in each channel is
+\begin{equation}
+  k = \sqrt{\xi\, E_\mathrm{cm}},
+  \label{eq:wave-number}
+\end{equation}
+so that $k^2 = \xi E_\mathrm{cm}$ with $k$ in $\fm^{-1}$ when
+$E_\mathrm{cm}$ is in $\MeV$.
+
+\subsection{Q-value and exit-channel energy}
+
+The Q-value of the reaction $A(a,b)B$ is
+\begin{equation}
+  Q = (m_A + m_a - m_B - m_b)c^2.
+\end{equation}
+The exit-channel CM energy is then
+\begin{equation}
+  E_\mathrm{cm}^{(f)} = E_\mathrm{cm}^{(i)} + Q.
+\end{equation}
+
+For ${}^{16}\mathrm{O}(d,p){}^{17}\mathrm{O}$:
+masses used are $m_p = 938.272\MeV/c^2$, $m_d = 1875.613\MeV/c^2$,
+$m_{16} = 16\times931.494\MeV/c^2$, $m_{17} = 17\times931.494\MeV/c^2$,
+giving $Q \approx 1.92\MeV$ and
+$E_\mathrm{cm}^{(i)} \approx 17.76\MeV$ for $E_\mathrm{lab}(d)=20\MeV$.
+
+% ============================================================
+\section{Bound-State Wave Function}
+% ============================================================
+
+\subsection{Radial Schrödinger equation}
+
+The reduced radial wave function $u(r) = r\,\psi(r)$ for the
+transferred nucleon in the binding potential satisfies
+\begin{equation}
+  -\frac{d^2 u}{dr^2} + \left[\frac{l(l+1)}{r^2}
+  + \xi\left(V(r) - E_b\right)\right]u = 0,
+  \label{eq:radial-schrodinger}
+\end{equation}
+where $E_b < 0$ is the binding energy and $V(r)$ is the binding
+(central + spin-orbit) potential.
+
+\subsection{Numerov integration}
+
+Equation~\eqref{eq:radial-schrodinger} is solved with the Numerov
+algorithm.  Writing $f_n \equiv f(r_n)$ for the term in square
+brackets of Eq.~\eqref{eq:radial-schrodinger}, the recurrence is
+\begin{equation}
+  \left(1 - \frac{h^2}{12}f_{n+1}\right)u_{n+1}
+  = 2u_n - u_{n-1}
+  + \frac{h^2}{12}\left(10 f_n u_n + f_{n-1} u_{n-1}\right),
+  \label{eq:numerov}
+\end{equation}
+where $h$ is the radial step and $r_n = n\,h$.
+
+The initial conditions near the origin are
+\begin{equation}
+  u(0) = 0, \qquad
+  u(h) = h^{l+1}.
+  \label{eq:bound-start}
+\end{equation}
+
+\subsection{Binding-potential}
+
+The central Woods-Saxon (WS) potential is
+\begin{equation}
+  V_\mathrm{WS}(r) = \frac{-V_0}{1 + \exp\!\left(\dfrac{r-R}{a}\right)},
+  \label{eq:ws}
+\end{equation}
+with radius $R = r_0 A^{1/3}$.  The Thomas spin-orbit potential adds
+\begin{equation}
+  V_\mathrm{SO}(r) = V_{so}\,(\bm{l}\cdot\bm{s})\,
+  \frac{1}{r}\frac{df_\mathrm{so}}{dr},
+  \label{eq:spin-orbit}
+\end{equation}
+where $f_\mathrm{so}(r)$ is the WS form factor for the SO geometry
+and the expectation value of $\bm{l}\cdot\bm{s}$ for a nucleon with
+spin $s=\tfrac{1}{2}$ and total angular momentum $j$ is
+\begin{equation}
+  \langle\bm{l}\cdot\bm{s}\rangle = \frac{j(j+1)-l(l+1)-3/4}{2}.
+\end{equation}
+
+\subsection{Normalization}
+
+The bound-state wave function is normalized by
+\begin{equation}
+  \int_0^\infty |u(r)|^2\,dr = 1,
+\end{equation}
+evaluated with the composite Simpson rule,
+\begin{equation}
+  \int_0^\infty |u|^2\,dr \approx
+  \frac{h}{3}\!\left[
+    |u_0|^2 + |u_N|^2
+    + 4\sum_{n=1,3,5,\ldots}|u_n|^2
+    + 2\sum_{n=2,4,6,\ldots}|u_n|^2
+  \right].
+\end{equation}
+The reduced radial wave function $u$ and the full radial part
+$R(r) = u(r)/r$ are related by
+$\int_0^\infty |R(r)|^2 r^2\,dr = 1$.
+
+% ============================================================
+\section{Optical-Model Potential}
+% ============================================================
+
+The complex optical potential has the general form
+\begin{equation}
+  U(r) = V_\mathrm{WS}(r)
+       - i\,W_\mathrm{vol}(r)
+       - i\,W_\mathrm{surf}(r)
+       + U_\mathrm{SO}(r)
+       + V_C(r),
+  \label{eq:optical-potential}
+\end{equation}
+with real depths defined as positive.
+
+\subsection{Volume terms}
+
+Real and imaginary volume WS:
+\begin{align}
+  V_\mathrm{WS}(r) &= \frac{-V_0}{1+\exp\!\left(\frac{r-R_V}{a_V}\right)},\\[4pt]
+  W_\mathrm{vol}(r) &= \frac{-W_0}{1+\exp\!\left(\frac{r-R_W}{a_W}\right)}.
+\end{align}
+
+\subsection{Surface imaginary term}
+
+The derivative (surface) imaginary potential is
+\begin{equation}
+  W_\mathrm{surf}(r) =
+  -4\,W_D\,f_S(r)\!\left[1-f_S(r)\right],
+  \quad
+  f_S(r) = \frac{1}{1+\exp\!\left(\dfrac{r-R_S}{a_S}\right)},
+  \label{eq:surface-ws}
+\end{equation}
+which is proportional to $4a_S\,df_S/dr$ and peaks at $r\approx R_S$.
+
+\subsection{Spin-orbit term}
+
+\begin{equation}
+  U_\mathrm{SO}(r) = V_{so}\,(\bm{l}\cdot\bm{s})\,
+  \frac{1}{r}\frac{df_{so}(r)}{dr},
+  \qquad
+  f_{so}(r) = \frac{1}{1+\exp\!\left(\dfrac{r-R_{so}}{a_{so}}\right)}.
+\end{equation}
+
+\subsection{Coulomb potential}
+
+For projectile charge $Z_1 e$ incident on a uniformly charged sphere
+of charge $Z_2 e$ and radius $R_C$:
+\begin{equation}
+  V_C(r) = \begin{cases}
+    \dfrac{Z_1 Z_2 e^2}{r} & r > R_C,\\[6pt]
+    \dfrac{Z_1 Z_2 e^2}{R_C^2}\,r & r \le R_C.
+  \end{cases}
+\end{equation}
+The Coulomb constant is $e^2 = 1.44\MeV\fm$.
+
+\subsection{Parameters for ${}^{16}\mathrm{O}(d,p){}^{17}\mathrm{O}$}
+
+Table~\ref{tab:omp-o16dp} lists the handbook parameters used for both
+channels ($A^{1/3}$ scalings are $16^{1/3}$ and $17^{1/3}$,
+respectively).
+
+\begin{table}[h]
+\centering
+\caption{Optical-model parameters (Table 5.1 / 5.2 from the handbook)
+         at 10~MeV/u.}
+\label{tab:omp-o16dp}
+\begin{tabular}{lcc}
+\toprule
+Parameter & $d+{}^{16}\mathrm{O}$ (entrance) & $p+{}^{17}\mathrm{O}$ (exit) \\
+\midrule
+$V_0$ (MeV)       & 88.955 & 49.544 \\
+$r_{0,V}$ (fm)    & 1.149  & 1.146  \\
+$a_V$ (fm)        & 0.751  & 0.675  \\
+$W_0^\mathrm{vol}$ (MeV) & 2.348 & 2.061 \\
+$r_{0,W}$ (fm)    & 1.345  & 1.146  \\
+$a_W$ (fm)        & 0.603  & 0.675  \\
+$W_D$ (MeV)       & 10.218 & 7.670  \\
+$r_{0,S}$ (fm)    & 1.397  & 1.302  \\
+$a_S$ (fm)        & 0.687  & 0.528  \\
+$V_{so}$ (MeV)    & 3.557  & 5.296  \\
+$r_{0,so}$ (fm)   & 0.972  & 0.934  \\
+$a_{so}$ (fm)     & 1.011  & 0.590  \\
+$r_{0,C}$ (fm)    & 1.303  & 1.419  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Distorted Waves}
+% ============================================================
+
+\subsection{Radial equation and Numerov integration}
+
+The reduced distorted wave $u(r) = r\,\chi(r)$ satisfies the complex
+Schrödinger equation
+\begin{equation}
+  -\frac{d^2 u}{dr^2} + \left[
+    \frac{l(l+1)}{r^2}
+    + \xi\!\left(U(r) - E_\mathrm{cm}\right)
+  \right]u = 0.
+  \label{eq:distorted-schrodinger}
+\end{equation}
+The Numerov recurrence~\eqref{eq:numerov} is applied with complex
+$f_n$ derived from the complex optical potential $U(r)$.
+
+\subsection{Normalization modes}
+
+The code implements four post-integration normalization conventions.
+
+\paragraph{Raw (\texttt{:raw})}
+No rescaling; relative amplitudes between partial waves are preserved.
+
+\paragraph{Coulomb-tail (\texttt{:coulomb-tail})}
+Scale $u$ so that $|u(r_\mathrm{max})| = |H_L^+(k r_\mathrm{max},\eta)|$
+where $H_L^+$ is the outgoing Coulomb–Hankel function:
+\begin{equation}
+  u_i \;\longleftarrow\; u_i \times \frac{|H_L^+(k r_\mathrm{max},\eta)|}{|u(r_\mathrm{max})|}.
+\end{equation}
+
+\paragraph{BIND-flux (\texttt{:bind-flux}) — DWUCK4-style}
+This mode reproduces the DWUCK4 \texttt{BIND} normalization.
+Define
+\begin{equation}
+  \mathrm{SCALE} = |H_L^-(k r_N, \eta)|,
+\end{equation}
+where $r_N = N\,h$ is the last grid point.  Then each grid value is
+rescaled as
+\begin{equation}
+  u(r_i) \;\longleftarrow\; u(r_i)\;\frac{\mathrm{SCALE}}{k\,r_i},
+  \qquad i \ge 1, \quad u(0)=0.
+  \label{eq:bind-flux}
+\end{equation}
+The effect is that in the outer region $u(r) \approx H_L^-(kr,\eta)/(kr)$.
+
+% ============================================================
+\section{S-Matrix and Phase Shifts}
+% ============================================================
+
+\subsection{R-matrix}
+
+From the Numerov solution at a matching radius $a$, the logarithmic
+derivative (R-matrix element times $a$) is
+\begin{equation}
+  R \equiv \frac{u(a)}{a\,u'(a)},
+\end{equation}
+computed either from the real-valued stepping (Coulomb + real WS) or
+from the complex Numerov stepping (Coulomb + complex WS) via
+\texttt{r-matrix-complex-imag-ws}.
+
+\subsection{Nuclear S-matrix}
+
+Matching $u$ to incoming ($H_L^-$) and outgoing ($H_L^+$) Coulomb
+Hankel functions at radius $a$:
+\begin{equation}
+  S_L^n = \frac{H_L^-(\rho) - \rho R\,\partial_\rho H_L^-(\rho)}
+               {H_L^+(\rho) - \rho R\,\partial_\rho H_L^+(\rho)},
+  \qquad \rho = k\,a.
+  \label{eq:s-matrix}
+\end{equation}
+The Coulomb Hankel functions at arbitrary $\eta$ are evaluated using
+the asymptotic expansion in terms of the Tricomi confluent
+hypergeometric function $U(a,b;z)$:
+\begin{equation}
+  H_L^\pm(\eta,\rho) = e^{\pm i\theta_L}\,(-2i\rho)^{L+1\mp i\eta}\,
+  U\!\left(L+1\pm i\eta,\,2(L+1);\,\mp 2i\rho\right),
+\end{equation}
+where $\theta_L = \rho - \tfrac{L\pi}{2} + \sigma_L - \eta\ln(2\rho)$.
+
+\subsection{Coulomb phase shifts}
+
+The Coulomb phase shift is
+\begin{equation}
+  \sigma_L(\eta) = \arg\,\Gamma(L+1+i\eta).
+  \label{eq:coulomb-sigma}
+\end{equation}
+
+The relative phase factor $e^{2i(\sigma_L-\sigma_0)}$ is computed
+without Gamma-function evaluations using the product formula
+\begin{equation}
+  e^{2i(\sigma_L - \sigma_0)} =
+  \prod_{k=1}^{L} \frac{k + i\eta}{k - i\eta},
+  \label{eq:coulomb-phase-diff}
+\end{equation}
+each factor being a pure phase of magnitude 1
+(implemented in \texttt{functions/coulomb-phase-diff}).
+
+\subsection{Sommerfeld parameter}
+
+The Sommerfeld parameter for CM scattering is
+\begin{equation}
+  \eta = \frac{Z_1 Z_2 e^2 \cdot \xi}{2k}
+       = \frac{Z_1 Z_2 e^2}{2(\hbar c)^2}\,\frac{\hbar^2 \mu}{k}.
+  \label{eq:sommerfeld}
+\end{equation}
+
+% ============================================================
+\section{Elastic Scattering}
+% ============================================================
+
+\subsection{Nuclear partial-wave bracket}
+
+From Thompson \& Nunes, Eq.~(3.1.88), the nuclear contribution to the
+scattering amplitude is built from
+\begin{equation}
+  e^{2i\sigma_L}\!\left(S_L^n - 1\right),
+  \label{eq:nuclear-bracket}
+\end{equation}
+which vanishes for $L > L_\mathrm{max}$ (beyond the nuclear range).
+
+\subsection{Total elastic amplitude}
+
+\begin{equation}
+  f(\theta) = f_C(\theta) + f_N(\theta),
+\end{equation}
+where the Coulomb amplitude is
+\begin{equation}
+  f_C(\theta) = -\frac{\eta}{2k\sin^2(\theta/2)}\,
+  \exp\!\left[i\!\left(-\eta\ln\sin^2(\theta/2) + 2\sigma_0\right) + i\pi\right],
+  \label{eq:fc}
+\end{equation}
+and the nuclear partial-wave amplitude is
+\begin{equation}
+  f_N(\theta) = -\frac{i}{k}\sum_{L=0}^{L_\mathrm{max}}
+  (2L+1)\,P_L(\cos\theta)\,e^{2i\sigma_L}\!\left(S_L^n - 1\right).
+  \label{eq:fn}
+\end{equation}
+
+Removing the overall phase $e^{2i\sigma_0}$ from both amplitudes
+defines $\tilde{f}_C$ and $\tilde{f}_N$, which satisfy
+$|f_C+f_N|^2 = |\tilde{f}_C+\tilde{f}_N|^2$:
+\begin{equation}
+  \tilde{f}_C(\theta) = -\frac{\eta}{2k\sin^2(\theta/2)}\,
+  \exp\!\left[-i\eta\ln\sin^2(\theta/2) + i\pi\right],
+\end{equation}
+\begin{equation}
+  \tilde{f}_N(\theta) = -\frac{i}{k}\sum_{L=0}^{L_\mathrm{max}}
+  (2L+1)\,P_L(\cos\theta)\,e^{2i(\sigma_L-\sigma_0)}\!\left(S_L^n - 1\right).
+\end{equation}
+
+\subsection{Differential cross-section}
+
+\begin{equation}
+  \frac{d\sigma}{d\Omega} = |f_C+f_N|^2
+  \quad \left[\fm^2/\sr\right].
+\end{equation}
+The code converts to mb/sr via the factor $1\fm^2 = 10\mb$.
+
+% ============================================================
+\section{DWBA Transfer Amplitude: Zero-Range Approximation}
+% ============================================================
+
+\subsection{Zero-range D0 approximation}
+
+In the zero-range (ZR) DWBA the inter-cluster binding interaction
+$V_{an}(r_{an})$ is replaced by a contact term:
+\begin{equation}
+  \langle\mathbf{r}_\beta|\,V_{an}\,|\phi_d\rangle
+  \;\approx\;
+  D_0\,\delta^{(3)}(\mathbf{r}_\alpha - \mathbf{r}_\beta),
+  \label{eq:zero-range}
+\end{equation}
+with the zero-range constant $D_0 = -122.4\MeV\fm^{3/2}$ for (d,p)
+reactions.
+
+\subsection{Form factor}
+
+The bound-state form factor entering the ZR integral is
+\begin{equation}
+  F_{\ell s j}(r) = R_n(r) \equiv \frac{u_n(r)}{r},
+  \label{eq:form-factor}
+\end{equation}
+where $u_n(r)$ is the normalized reduced bound-state wave function of
+the transferred neutron in ${}^{17}\mathrm{O}$.
+
+\subsection{ZR radial integral}
+
+Following Austern (1970), Eq.~(5.5), the ZR radial matrix element is
+\begin{equation}
+  I_{L_\beta L_\alpha}^{\ell s j}
+  = \frac{M_B}{M_A}\,\frac{4\pi}{k_\alpha k_\beta}
+    \int_0^\infty F_{\ell s j}(r)\,
+    \chi_\alpha^{(+)}(L_\alpha, r)\,
+    \chi_\beta^{(-)*}\!\!\left(L_\beta,\,\frac{M_A}{M_B}r\right)
+    r^2\,dr,
+  \label{eq:zr-radial-integral}
+\end{equation}
+where $M_A = M({}^{16}\mathrm{O})$, $M_B = M({}^{17}\mathrm{O})$, and
+$\chi_{\alpha(\beta)}^{(\pm)}$ are the distorted waves (reduced: $u/r$).
+The ZR mass-ratio $M_A/M_B$ gives the argument scaling of the exit
+distorted wave.
+
+The integral is evaluated with the composite Simpson rule.
+
+\subsection{Angular-momentum selection rules}
+
+For a fixed transferred orbital angular momentum $\ell$,
+the admissible ($L_\alpha$, $L_\beta$) pairs satisfy:
+\begin{itemize}
+  \item parity: $(-1)^{L_\alpha} = (-1)^{L_\beta+\ell}$,
+  \item triangle inequality: $|L_\alpha - \ell| \le L_\beta \le L_\alpha + \ell$,
+  \item $L_\alpha, L_\beta \le L_\mathrm{max}$.
+\end{itemize}
+
+\subsection{Reduced amplitude (Austern Eq.~5.6)}
+
+The reduced transfer amplitude for magnetic quantum number $m$ is
+\begin{equation}
+  \beta_{\ell m}(\Theta)
+  = \sum_{L_\alpha, L_\beta}
+    i^{L_\alpha - L_\beta - \ell}\,
+    e^{i(\sigma_{\alpha L_\alpha} + \sigma_{\beta L_\beta})}\,
+    \sqrt{2L_\beta+1}\,
+    I_{L_\beta L_\alpha}^{\ell s j}\,
+    \langle L_\beta\,\ell;\,0\,0 \mid L_\alpha\,0\rangle\,
+    \langle L_\beta\,\ell;\,-m\,m \mid L_\alpha\,0\rangle\,
+    Y_{L_\beta}^{-m}(\Theta, 0),
+  \label{eq:austern-5-6}
+\end{equation}
+where $\sigma_{\alpha L_\alpha} = \sigma_{L_\alpha}(\eta_\alpha)$ and
+$\sigma_{\beta L_\beta} = \sigma_{L_\beta}(\eta_\beta)$ are the
+Coulomb phase shifts in the entrance and exit channels, $\Theta$ is
+the CM scattering angle, and $Y_{L_\beta}^{-m}(\Theta,0)$ is a
+spherical harmonic evaluated at azimuthal angle 0 (coplanar
+kinematics).
+
+\subsection{Transfer amplitude}
+
+In the ZR approximation the full transfer amplitude is
+\begin{equation}
+  T_m(\Theta) = D_0\,\sqrt{2\ell+1}\;\beta_{\ell m}(\Theta).
+  \label{eq:transfer-amplitude}
+\end{equation}
+
+\subsection{Differential cross-section}
+
+The differential cross-section for an unpolarized beam (spin-average
+over initial states, spin-sum over final states) is
+\begin{equation}
+  \frac{d\sigma}{d\Omega}(\Theta)
+  = \frac{\mu_i\,\mu_f}{(2\pi\hbar^2)^2}\,\frac{k_f}{k_i}\,
+    \mathcal{S}\;
+    \sum_{m}\,|T_m(\Theta)|^2,
+  \label{eq:dsigma-kinematics}
+\end{equation}
+or equivalently, using the mass factors $\xi_i = 2\mu_i/(\hbar c)^2$:
+\begin{equation}
+  \frac{d\sigma}{d\Omega}(\Theta)
+  = \frac{\xi_i\,\xi_f}{16\pi^2}\,\frac{k_f}{k_i}\,
+    \mathcal{S}\;
+    \sum_{m}|T_m|^2
+  \quad\times 10 \quad [\mb/\sr].
+  \label{eq:dsigma-massfactor}
+\end{equation}
+The factor of 10 converts $\fm^2 \to \mb$ ($1\fm^2 = 10\mb$).
+
+The spectroscopic factor $\mathcal{S}$ absorbs spin-statistics:
+\begin{equation}
+  \mathcal{S}
+  = S_\mathrm{factor}
+    \times \underbrace{\frac{2J_f+1}{2J_i+1}}_{\text{nuclear spin}}
+    \times \underbrace{\frac{1}{3}}_{\text{deuteron spin}}.
+  \label{eq:spectroscopic}
+\end{equation}
+For ${}^{16}\mathrm{O}(d,p){}^{17}\mathrm{O}$: $J_i = 0$,
+$J_f = 5/2$, giving $(2J_f+1)/(2J_i+1) = 6$.
+
+The sum over $m$ runs over $m = -\ell, \ldots, \ell$ with each term
+$|T_m|^2 = D_0^2\,(2\ell+1)\,|\beta_{\ell m}|^2$.
+
+% ============================================================
+\section{Specific Reaction: ${}^{16}\mathrm{O}(d,p){}^{17}\mathrm{O}$}
+% ============================================================
+
+\subsection{Channels}
+
+\begin{itemize}
+  \item \textbf{Entrance} ($\alpha$): $d + {}^{16}\mathrm{O}$,
+        $E_\mathrm{lab}(d) = 20\MeV$, $k_\alpha = \sqrt{\xi_i E_\mathrm{cm}^{(i)}}$.
+  \item \textbf{Exit} ($\beta$): $p + {}^{17}\mathrm{O}(\mathrm{g.s.})$,
+        $k_\beta = \sqrt{\xi_f E_\mathrm{cm}^{(f)}}$.
+\end{itemize}
+
+\subsection{Transferred nucleon}
+
+A neutron is transferred to the $1d_{5/2}$ orbit of ${}^{17}\mathrm{O}$:
+$n = 1$, $\ell = 2$, $s = 1/2$, $j = 5/2$.
+The binding energy is $E_b \approx -4.14\MeV$ (bound-state well is fit
+to reproduce this value using a WS potential with
+$R_n = 2.85\fm$, $a_n = 0.60\fm$).
+
+\subsection{Partial-wave summation}
+
+$L_\mathrm{max}$ is chosen such that the nuclear amplitude has
+converged.  For this reaction, $L_\mathrm{max} \approx 15$--$20$.
+
+\subsection{Summary of the calculation chain}
+
+\begin{enumerate}
+  \item Solve the kinematics: $E_\mathrm{cm}^{(i)}$, $E_\mathrm{cm}^{(f)}$,
+        $k_\alpha$, $k_\beta$, $\eta_\alpha$, $\eta_\beta$.
+  \item Solve the bound-state equation for $u_n(r)$; normalize it.
+  \item For each $L_\alpha \in [0, L_\mathrm{max}]$:
+    \begin{enumerate}
+      \item Solve the distorted-wave equation for $\chi_\alpha^{(+)}$
+            with the $d$+${}^{16}$O optical potential.
+    \end{enumerate}
+  \item For each $L_\beta$ (selected by the triangle rule):
+    \begin{enumerate}
+      \item Solve the distorted-wave equation for $\chi_\beta^{(-)}$
+            with the $p$+${}^{17}$O optical potential.
+    \end{enumerate}
+  \item Compute $I_{L_\beta L_\alpha}$ via Eq.~\eqref{eq:zr-radial-integral}
+        (Simpson quadrature).
+  \item Attach Coulomb phases: $I_{L_\beta L_\alpha}
+        \xrightarrow{\sigma_\alpha,\,\sigma_\beta}$
+        \texttt{handbook-zr-rows-with-coulomb-sigma}.
+  \item Compute $\beta_{\ell m}(\Theta)$ via Eq.~\eqref{eq:austern-5-6}
+        for $m = -\ell, \ldots, \ell$.
+  \item Accumulate $\sum_m |T_m|^2$ and apply Eq.~\eqref{eq:dsigma-massfactor}.
+\end{enumerate}
+
+% ============================================================
+\section{Numerical Parameters}
+% ============================================================
+
+\begin{table}[h]
+\centering
+\caption{Default numerical parameters.}
+\label{tab:numerics}
+\begin{tabular}{lll}
+\toprule
+Parameter & Value & Description \\
+\midrule
+$h$        & $0.05\fm$  & Radial step size \\
+$r_\mathrm{max}$ & $100\fm$ & Radial integration limit \\
+$L_\mathrm{max}$ & 20       & Maximum partial wave \\
+$D_0$      & $-122.4\MeV\fm^{3/2}$ & Zero-range constant for (d,p) \\
+$\hbar c$  & $197.7\MeV\fm$      & Conversion constant \\
+$e^2$      & $1.44\MeV\fm$       & Coulomb constant \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Code--Formula Correspondence}
+% ============================================================
+
+\begin{table}[h]
+\centering
+\caption{Mapping between key formulas and code functions.}
+\label{tab:code-map}
+\begin{tabular}{lll}
+\toprule
+Formula & Equation & Code function \\
+\midrule
+Lab-to-CM energy & Eq.~\eqref{eq:lab-cm-energy}
+  & \texttt{functions/lab-to-cm-energy} \\
+Mass factor $\xi$ & Eq.~\eqref{eq:mass-factor}
+  & \texttt{functions/mass-factor-from-mu} \\
+Wave-number $k$ & Eq.~\eqref{eq:wave-number}
+  & \texttt{(Math/sqrt (* mass-factor E))} \\
+Bound-state Numerov & Eq.~\eqref{eq:numerov}
+  & \texttt{transfer/solve-bound-state-numerov} \\
+Spin-orbit $\bm{l}\cdot\bm{s}$ & \S\,3.3
+  & \texttt{transfer/l-dot-s-nucleon} \\
+Normalization & \S\,3.4
+  & \texttt{transfer/normalize-bound-state} \\
+Optical potential & Eq.~\eqref{eq:optical-potential}
+  & \texttt{transfer/optical-potential-woods-saxon} \\
+Surface imaginary & Eq.~\eqref{eq:surface-ws}
+  & (W-surf branch in \texttt{optical-potential-woods-saxon}) \\
+Distorted-wave Numerov & Eq.~\eqref{eq:numerov}
+  & \texttt{transfer/distorted-wave-optical} \\
+BIND normalization & Eq.~\eqref{eq:bind-flux}
+  & \texttt{:normalize-mode :bind-flux} \\
+Nuclear S-matrix & Eq.~\eqref{eq:s-matrix}
+  & \texttt{functions/s-matrix} \\
+Coulomb phase $\sigma_L$ & Eq.~\eqref{eq:coulomb-sigma}
+  & \texttt{functions/coulomb-sigma-L} \\
+Phase-diff product & Eq.~\eqref{eq:coulomb-phase-diff}
+  & \texttt{functions/coulomb-phase-diff} \\
+Sommerfeld $\eta$ & Eq.~\eqref{eq:sommerfeld}
+  & \texttt{functions/channel-sommerfeld-eta} \\
+Coulomb amplitude $f_C$ & Eq.~\eqref{eq:fc}
+  & \texttt{functions/coulomb-scattering-amplitude-}\ldots \\
+Nuclear amplitude $f_N$ & Eq.~\eqref{eq:fn}
+  & \texttt{functions/elastic-nuclear-amplitude-fn} \\
+Nuclear bracket & Eq.~\eqref{eq:nuclear-bracket}
+  & \texttt{functions/partial-wave-exp2sigma-Sn-minus-one} \\
+Form factor $F = u/r$ & Eq.~\eqref{eq:form-factor}
+  & \texttt{transfer/handbook-F-lsj-radial-from-neutron-bound-u} \\
+ZR radial integral $I$ & Eq.~\eqref{eq:zr-radial-integral}
+  & \texttt{transfer/handbook-radial-integral-I-zr} \\
+Austern amplitude $\beta$ & Eq.~\eqref{eq:austern-5-6}
+  & \texttt{transfer/handbook-zr-multipole-amplitude-sum} \\
+Transfer amplitude $T_m$ & Eq.~\eqref{eq:transfer-amplitude}
+  & \texttt{(mul pref (handbook-zr-multipole-amplitude-sum \ldots))} \\
+Differential cross-section & Eq.~\eqref{eq:dsigma-massfactor}
+  & \texttt{transfer/transfer-differential-cross-section} \\
+Spin prefactor $\mathcal{S}$ & Eq.~\eqref{eq:spectroscopic}
+  & \texttt{transfer/transfer-nuclear-spin-statistical-factor} \\
+  &   & \texttt{transfer/transfer-unpolarized-deuteron-spin-factor} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section*{References}
+% ============================================================
+
+\begin{enumerate}
+  \item N. Austern, \textit{Direct Nuclear Reaction Theories},
+        Wiley--Interscience, 1970.  [Eqs.~(4.60), (5.3)--(5.6).]
+  \item I.~J. Thompson and F.~M. Nunes,
+        \textit{Nuclear Reactions for Astrophysics},
+        Cambridge University Press, 2009.  [Eqs.~(3.1.81), (3.1.84), (3.1.88).]
+  \item \textit{Handbook of direct nuclear reaction for retarded theorist},
+        internal reference.  [Tables 5.1, 5.2, \S\,5.5.2.]
+  \item P.~D. Kunz, DWUCK4 code manual (unpublished).
+        [BIND normalization convention.]
+\end{enumerate}
+
+\end{document}

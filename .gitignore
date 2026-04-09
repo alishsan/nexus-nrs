@@ -76,6 +76,9 @@ logs/
 *.spl
 *.bib
 *Notes.bib
+# Allow LaTeX source and PDF inside doc/
+!doc/*.tex
+!doc/*.pdf
 
 # Temporary files
 *.tmp
