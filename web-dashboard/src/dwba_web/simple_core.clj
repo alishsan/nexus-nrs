@@ -94,24 +94,27 @@
 
 (defn- transfer-default-16o-dp
   "Default **¹⁶O(d,p)¹⁷O** differential cross section (**mb/sr**, CM) at **E_lab(d)=20 MeV** on **¹⁶O** at rest,
-  angle grid **20°…180°** step **20°**. Backend: parent project **¹⁶O(d,p)** ZR stripping benchmark."
+  angle grid **5°…180°** step **5°**. Backend: parent project **¹⁶O(d,p)** ZR stripping benchmark.
+  Uses **`o16-dp-angular-curve-handbook-mb-sr`** which builds distorted waves once and reuses them across all angles."
   []
   (when-not (find-ns 'dwba.benchmark.o16-dp-handbook)
     (require 'dwba.benchmark.o16-dp-handbook))
-  (let [ds-fn @(requiring-resolve 'dwba.benchmark.o16-dp-handbook/o16-dp-dsigma-handbook-mb-sr)
-        kin-fn @(requiring-resolve 'dwba.benchmark.o16-dp-handbook/o16-dp-kinematics)
+  (let [curve-fn @(requiring-resolve 'dwba.benchmark.o16-dp-handbook/o16-dp-angular-curve-handbook-mb-sr)
+        kin-fn   @(requiring-resolve 'dwba.benchmark.o16-dp-handbook/o16-dp-kinematics)
         {:keys [e-cm-i]} (kin-fn)
-        E-default 20.0
-        angles-deg (range 20.0 181.0 20.0)
-        h 0.08
-        r-max 20.0
-        L-max 6
+        E-default  20.0
+        angles-deg (vec (range 5.0 181.0 5.0))
+        h     0.08
+        r-max 100.0
+        L-max 18
+        curve (curve-fn angles-deg :e-cm-i e-cm-i :h h :r-max r-max :L-max L-max)
         transfer-vec
-        (vec (for [theta-deg angles-deg]
-               {:energy E-default
-                :angle theta-deg
-                :differential_cross_section
-                (double (ds-fn theta-deg :e-cm-i e-cm-i :h h :r-max r-max :L-max L-max))}))]
+        (mapv (fn [row]
+                {:energy E-default
+                 :angle  (double (:theta-deg row))
+                 :differential_cross_section
+                 (double (:differential_cross_section_mb_sr row))})
+              curve)]
     {:label "16O(d,p)17O — ZR DWBA (mb/sr)"
      :transfer transfer-vec}))
 
@@ -670,22 +673,32 @@
       (handle-api-inelastic-standard req))))
 
 (defn- transfer-data-16o-dp
-  "Cross table **{:energy :angle :differential_cross_section}** for **¹⁶O(d,p)** at each lab **E(d)** (MeV)."
+  "Cross table **{:energy :angle :differential_cross_section}** for **¹⁶O(d,p)** at each lab **E(d)** (MeV).
+  Uses **`o16-dp-angular-curve-handbook-mb-sr`** — builds distorted waves once per energy,
+  then evaluates the angular integral at all angles. Much faster than per-angle calls."
   [energies angles-deg h r-max L-max S-factor]
   (when-not (find-ns 'dwba.benchmark.o16-dp-handbook)
     (require 'dwba.benchmark.o16-dp-handbook))
-  (let [ds-fn @(requiring-resolve 'dwba.benchmark.o16-dp-handbook/o16-dp-dsigma-handbook-mb-sr)
+  (let [curve-fn @(requiring-resolve 'dwba.benchmark.o16-dp-handbook/o16-dp-angular-curve-handbook-mb-sr)
+        kin-fn   @(requiring-resolve 'dwba.benchmark.o16-dp-handbook/o16-dp-kinematics)
         m16 (* 16.0 931.494)
         m-d 1875.613
         S* (double S-factor)]
-    (vec (for [E-i energies
-               theta-deg angles-deg]
-           (let [e-cmi (phys/lab-to-cm-energy (double E-i) m-d m16)
-                 s (ds-fn theta-deg :e-cm-i e-cmi :h (double h) :r-max (double r-max) :L-max (long L-max)
-                          :S-factor S*)]
-             {:energy (double E-i)
-              :angle (double theta-deg)
-              :differential_cross_section (double s)})))))
+    (vec (mapcat
+           (fn [E-i]
+             (let [e-cmi (phys/lab-to-cm-energy (double E-i) m-d m16)
+                   curve (curve-fn angles-deg
+                                   :e-cm-i e-cmi
+                                   :h (double h)
+                                   :r-max (double r-max)
+                                   :L-max (long L-max)
+                                   :S-factor S*)]
+               (mapv (fn [row]
+                       {:energy (double E-i)
+                        :angle  (double (:theta-deg row))
+                        :differential_cross_section (double (:differential_cross_section_mb_sr row))})
+                     curve)))
+           energies))))
 
 (defn- handle-api-transfer
   "Transfer tab **POST**. **d-p:** `o16-dp-handbook` benchmark. **p-d:** `GET /api/transfer-default` matches
@@ -704,9 +717,9 @@
               optical (transfer-optical-imag-params p)
               S-factor (parse-double-default (or (:transfer_S p) (:S_factor p)) 1.0)
               h (parse-double-default (:transfer_h p) 0.08)
-              r-max (parse-double-default (:transfer_r_max p) 20.0)
-              L-max (parse-int-default (:transfer_L_max p) 6)
-              angles-deg (range 20.0 181.0 20.0)
+              r-max (parse-double-default (:transfer_r_max p) 100.0)
+              L-max (parse-int-default (:transfer_L_max p) 18)
+              angles-deg (vec (range 5.0 181.0 5.0))
               transfer-data (transfer-data-16o-dp energies angles-deg h r-max L-max S-factor)
               note (if (= target-str "16O")
                      "Bound state and global OM fixed in benchmark; S_factor scales σ."
@@ -808,7 +821,8 @@
                                                                :li11_optical_set "V" :li11_beta_scale 1.0 :li11_L_max 22
                                                                :li11_r_max 45.0 :li11_h 0.02 :li11_theta_step 5.0 :li11_transfer_ell 1
                                                                :transfer_S 1.0 :transfer_partial_L 1 :transfer_l_i 1 :transfer_l_f 0
-                                                               :transfer_r_max 20.0 :transfer_h 0.01
+                                                               :transfer_r_max 100.0 :transfer_h 0.08
+                                                               :transfer_L_max 18
                                                                :transfer_W0 0.0 :transfer_RW 2.0 :transfer_aW 0.6}
                                          :parameter_ranges {:V0 {:min -100.0 :max 100.0 :step 1.0} :R0 {:min 0.5 :max 10.0 :step 0.1}
                                                             :a0 {:min 0.1 :max 2.0 :step 0.1} :radius {:min 1.0 :max 30.0 :step 0.1}
