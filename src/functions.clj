@@ -21,7 +21,7 @@
                                      lambda-pi-squared-fm2-default]]
 ))
 
-(declare f-func f-func-deriv g-func g-func-deriv hankel0+ hankel0- phase-shift0)
+(declare f-func f-func-deriv g-func g-func-deriv hankel0+ hankel0- phase-shift0 cm-to-lab-angle)
 
 (def hbarc 197.7) ; MeV·fm (ℏc)
 
@@ -47,20 +47,61 @@
 
 (defn lab-to-cm-angle [theta-lab m1 m2]
   "Convert laboratory angle to center-of-mass angle - User's cteformula"
-  (let [ratio (/ m1 (+ m1 m2))
-        tan-theta-cm (/ (Math/sin theta-lab) (- (Math/cos theta-lab) ratio))
-        sign-tan (m/signum tan-theta-cm)
-        cos-theta-cm (Math/sqrt (/ 1.0 (+ 1.0 (* tan-theta-cm tan-theta-cm))))]
-    (Math/acos (* sign-tan cos-theta-cm))))
+  (let [target (double theta-lab)
+        f (fn [theta-cm] (- (cm-to-lab-angle theta-cm m1 m2) target))
+        tol 1e-12
+        max-iters 200
+        samples 2000
+        step (/ Math/PI samples)
+        bisect-root
+        (fn [a b]
+          (loop [low a
+                 high b
+                 f-low (f a)
+                 iter 0]
+            (let [mid (* 0.5 (+ low high))
+                  f-mid (f mid)]
+              (if (or (>= iter max-iters)
+                      (< (Math/abs f-mid) tol)
+                      (< (Math/abs (- high low)) tol))
+                mid
+                (if (or (zero? f-mid)
+                        (not= (m/signum f-low) (m/signum f-mid)))
+                  (recur low mid f-low (inc iter))
+                  (recur mid high f-mid (inc iter)))))))
+        roots
+        (reduce (fn [acc i]
+                  (let [a (* i step)
+                        b (* (inc i) step)
+                        fa (f a)
+                        fb (f b)]
+                    (if (or (zero? fa)
+                            (zero? fb)
+                            (not= (m/signum fa) (m/signum fb)))
+                      (conj acc (bisect-root a b))
+                      acc)))
+                []
+                (range samples))
+        fallback
+        (reduce (fn [best i]
+                  (let [x (* i step)
+                        err (Math/abs (f x))]
+                    (if (< err (:err best))
+                      {:x x :err err}
+                      best)))
+                {:x 0.0 :err Double/POSITIVE_INFINITY}
+                (range (inc samples)))]
+    (if (seq roots)
+      (let [best-root (apply min-key #(Math/abs (f %)) roots)]
+        best-root)
+      (:x fallback))))
 
 (defn cm-to-lab-angle [theta-cm m1 m2]
   "Convert center-of-mass angle to laboratory angle - inverse of lab-to-cm-angle"
-  (let [ratio (/ m1 (+ m1 m2))  ; Same ratio as lab-to-cm
-        sincm (Math/sin theta-cm)
-        coscm (Math/cos theta-cm);
-        sign-cos (m/signum coscm)
-        cos-theta-lab (+ (* ratio sincm sincm) (* sign-cos (Math/sqrt (+ (* coscm coscm) (* (Math/pow sincm 4) ratio ratio) (* -1 ratio ratio sincm sincm) ))))]
-    (Math/acos cos-theta-lab)))
+  (let [ratio (/ m1 m2)
+        theta (Math/atan2 (Math/sin theta-cm)
+                          (+ (Math/cos theta-cm) ratio))]
+    (if (neg? theta) (+ theta Math/PI) theta)))
 
 (defn jacobian-lab-to-cm [theta-lab m1 m2]
   "Calculate Jacobian for lab-to-CM transformation"
@@ -657,7 +698,9 @@ rho (* k a) ]
    - converged?: Whether convergence was achieved"
   (let [f-low (f low)
         f-high (f high)
-precision 0.00001]
+        ;; Keep interval tolerance bounded so legacy callers that pass a huge tolerance
+        ;; (to focus on function-value checks) still iterate meaningfully.
+        interval-tol (min 1.0e-5 (Math/abs tolerance))]
     (if (= (m/signum f-low) (m/signum f-high))
       {:root low
        :value f-low
@@ -668,13 +711,14 @@ precision 0.00001]
              high high
              iter 0]
         (if (or (>= iter max-iters)
-                (< (Math/abs (- high low)) precision))
+                (< (Math/abs (- high low)) interval-tol))
           (let [mid (/ (+ low high) 2.0)
                 f-mid (f mid)]
             {:root mid
              :value f-mid
              :iterations iter
-             :converged? (< (Math/abs f-mid) tolerance)})
+             :converged? (or (< (Math/abs f-mid) tolerance)
+                             (< (Math/abs (- high low)) interval-tol))})
           (let [mid (/ (+ low high) 2.0)
                 f-mid (f mid)
                 f-low (f low)]

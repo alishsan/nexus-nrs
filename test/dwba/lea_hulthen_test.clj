@@ -15,7 +15,7 @@
       (is (every? number? results) "All values should be numbers")
       (is (every? #(< % 0) results) "Hulthen potential should be negative (attractive)")
       ;; Potential should decrease (become less negative) with distance
-      (is (> (first results) (last results)) "Potential should decrease with distance"))))
+      (is (< (first results) (last results)) "Potential should decrease with distance"))))
 
 (deftest hulthen-wavefunction-test
   (testing "Hulthen wavefunction calculation"
