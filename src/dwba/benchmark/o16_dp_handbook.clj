@@ -94,6 +94,59 @@
     :r-max-bs 25.0
     :E-bind  -4.1438}))
 
+(defn- o17-s12-bound-phi-n
+  "Find the ¹⁷O 2s₁/₂ single-particle bound state.
+  **Strategy:** the 2s state (1 radial node) sits at **E_bind = −3.2728 MeV**
+  (= S_n(g.s.) − E_x(1/2⁺) = 4.1438 − 0.871 MeV).  The standard energy-scan
+  path cannot isolate it because the deeply-bound 1s root always appears first.
+  Instead we **fix E = −3.2728** and bisect **V₀ ∈ [50, 56] MeV** until
+  **u(r_max) = 0** with the correct node count.
+  Geometry: **r₀ = 1.25 fm**, **a₀ = 0.65 fm** (same as d₅/₂); no spin–orbit."
+  [h _r-max]
+  (let [mf-n    (o17-d52-neutron-mass-factor)
+        R0      (* 1.25 (Math/pow 16.0 (/ 1.0 3.0)))
+        a0      0.65
+        opts    {:no-spin-orbit true}
+        r-max-bs 25.0
+        E-bind  -3.2728
+        ;; u(r_max) at fixed E, varying V0: sign change ≈ [50, 56] MeV
+        u-end   (fn [V0]
+                  (binding [fn/mass-factor mf-n]
+                    (last (t/solve-bound-state-numerov
+                           E-bind 0 V0 R0 a0 mf-n h r-max-bs opts))))
+        v0-found
+        (loop [lo 50.0 hi 56.0 n 0]
+          (let [mid (/ (+ lo hi) 2.0)
+                fm  (u-end mid)]
+            (if (or (> n 60) (< (Math/abs fm) 0.01) (< (- hi lo) 1e-7))
+              mid
+              (if (neg? fm)
+                (recur mid hi (inc n))
+                (recur lo mid (inc n))))))
+        _ (let [uv (binding [fn/mass-factor mf-n]
+                     (t/solve-bound-state-numerov
+                      E-bind 0 v0-found R0 a0 mf-n h r-max-bs opts))
+                nodes (t/count-nodes uv)]
+            (when (not= nodes 1)
+              (throw (ex-info "¹⁷O 2s₁/₂ V₀ search did not find 1-node state"
+                              {:v0 v0-found :nodes nodes}))))]
+    (binding [fn/mass-factor mf-n]
+      (t/normalize-bound-state
+       (t/solve-bound-state-numerov E-bind 0 v0-found R0 a0 mf-n h r-max-bs opts)
+       h))))
+
+(defn o17-s12-bound-state
+  "Return the normalized ¹⁷O 2s₁/₂ reduced radial wavefunction **u(r)** as a map:
+  **{:u vec :h h :r-max-bs 25.0 :E-bind -3.2728}**.
+  The 2s₁/₂ state has **1 radial node** (first excited state of ¹⁷O at E_x = 0.871 MeV).
+  Grid, normalization, and F(r) convention are the same as **`o17-d52-bound-state`**."
+  ([] (o17-s12-bound-state 0.05))
+  ([h]
+   {:u       (o17-s12-bound-phi-n h nil)
+    :h       h
+    :r-max-bs 25.0
+    :E-bind  -3.2728}))
+
 (defn o16-dp-kinematics
   "Map **:mass-factor-i :mass-factor-f :e-cm-i :e-cm-f :k-i :k-f :Q-mev :M-target :M-residual**
   for **d + ¹⁶O → p + ¹⁷O**.

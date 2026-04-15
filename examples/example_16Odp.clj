@@ -9,7 +9,7 @@
 ;;
 ;; Load: `(load-file "examples/example_16Odp.clj")` from project root.
 ;;
-;; Writes **output/o17_d52_u.png** (bound state u(r) and F(r)=u(r)/r),
+;; Writes **output/o17_bound_states.png** (0d₅/₂ + 2s₁/₂ u(r) and F(r)=u(r)/r),
 ;; **output/16Odp_dcs.png** (linear y) and **output/16Odp_dcs_log.png** (log₁₀ y-axis).
 
 (ns examples.example-16Odp
@@ -185,34 +185,44 @@
               (max floor (.value spline xc))))
           x-fine)))
 
-;; ── Bound-state plot ─────────────────────────────────────────────────────
-;; ¹⁷O 0d₅/₂ reduced radial wavefunction u(r) and F(r)=u(r)/r.
-;; u(r) is normalized: ∫|u|² dr = 1.  F(r) = u(r)/r is the actual radial
-;; function entering the DWBA form factor.
-(let [h-bs   0.05
-      {:keys [u h r-max-bs E-bind]} (oh/o17-d52-bound-state h-bs)
-      n      (count u)
-      rs     (mapv #(* (double %) h) (range n))
-      us     (mapv double u)
-      ;; F(r) = u(r)/r, with F(0)=0 by convention
-      Fs     (mapv (fn [^long i ^double r]
-                     (if (< r 1e-6) 0.0 (/ (nth us i) r)))
-                   (range n) rs)]
-  (println (format "=== ¹⁷O 0d₅/₂ bound state  E_bind = %.4f MeV  V₀ found by bisection ===" E-bind))
-  (println (format "  Grid: h = %.3f fm, r_max = %.1f fm, %d points" h r-max-bs n))
-  (println (format "  Norm check: ∫|u|² dr ≈ %.6f  (should be 1)" (* h (reduce + (map #(* % %) us)))))
-  (println "")
+;; ── Bound-state plots ────────────────────────────────────────────────────
+;; ¹⁷O single-particle states: 0d₅/₂ (g.s.) and 2s₁/₂ (first excited, E_x=0.871 MeV).
+;; u(r) is normalized: ∫|u|² dr = 1.  F(r) = u(r)/r is the radial form factor in DWBA.
+(let [h-bs  0.05
+      d52   (oh/o17-d52-bound-state h-bs)
+      s12   (oh/o17-s12-bound-state h-bs)
+      mkrs  (fn [{:keys [u h r-max-bs]}]
+              (let [n  (count u)
+                    rs (mapv #(* (double %) h) (range n))
+                    us (mapv double u)
+                    Fs (mapv (fn [^long i ^double r]
+                               (if (< r 1e-6) 0.0 (/ (nth us i) r)))
+                             (range n) rs)]
+                [rs us Fs n]))]
+  (doseq [[label st] [["0d₅/₂" d52] ["2s₁/₂" s12]]]
+    (let [{:keys [h r-max-bs E-bind u]} st
+          [rs us Fs n] (mkrs st)]
+      (println (format "=== ¹⁷O %s bound state  E_bind = %.4f MeV ===" label E-bind))
+      (println (format "  Grid: h = %.3f fm, r_max = %.1f fm, %d points" h r-max-bs n))
+      (println (format "  Nodes: %d  |  Norm ∫|u|²dr = %.6f"
+                       (t/count-nodes us) (* h (reduce + (map #(* % %) us)))))
+      (println "")))
+  ;; Single combined plot: u(r) for both states + F(r)=u(r)/r
   (try
-    (let [_ (io/make-parents (io/file "output/o17_d52_u.png"))
-          chart (-> (c/xy-plot rs us
-                               :title "¹⁷O 0d₅/₂ — reduced radial wavefunction u(r)"
+    (let [[rs52 us52 Fs52 _] (mkrs d52)
+          [rs12 us12 Fs12 _] (mkrs s12)
+          _ (io/make-parents (io/file "output/o17_bound_states.png"))
+          chart (-> (c/xy-plot rs52 us52
+                               :title "¹⁷O single-particle states — u(r) and F(r)=u(r)/r"
                                :x-label "r (fm)"
-                               :y-label "u(r)  [fm^{-1/2}]"
-                               :series-label "u(r)"
+                               :y-label "u(r) or F(r) = u(r)/r  [fm^{-1/2}]"
+                               :series-label "u(r) 0d₅/₂"
                                :legend true)
-                    (c/add-lines rs Fs :series-label "F(r) = u(r)/r"))]
-      (i/save chart "output/o17_d52_u.png" :width 800 :height 500)
-      (println "Plot saved: output/o17_d52_u.png"))
+                    (c/add-lines rs52 Fs52 :series-label "F(r) 0d₅/₂")
+                    (c/add-lines rs12 us12 :series-label "u(r) 2s₁/₂")
+                    (c/add-lines rs12 Fs12 :series-label "F(r) 2s₁/₂"))]
+      (i/save chart "output/o17_bound_states.png" :width 800 :height 500)
+      (println "Plot saved: output/o17_bound_states.png"))
     (catch Exception e
       (println (format "Note: could not save bound-state plot (%s)." (.getMessage e)))))
   (println ""))
