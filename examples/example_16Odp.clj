@@ -9,7 +9,8 @@
 ;;
 ;; Load: `(load-file "examples/example_16Odp.clj")` from project root.
 ;;
-;; Writes **output/16Odp_dcs.png** (linear y) and **output/16Odp_dcs_log.png** (log₁₀ y-axis).
+;; Writes **output/o17_d52_u.png** (bound state u(r) and F(r)=u(r)/r),
+;; **output/16Odp_dcs.png** (linear y) and **output/16Odp_dcs_log.png** (log₁₀ y-axis).
 
 (ns examples.example-16Odp
   (:require [dwba.benchmark.o16-dp-handbook :as oh]
@@ -183,6 +184,38 @@
             (let [xc (max xlo (min xhi x))]
               (max floor (.value spline xc))))
           x-fine)))
+
+;; ── Bound-state plot ─────────────────────────────────────────────────────
+;; ¹⁷O 0d₅/₂ reduced radial wavefunction u(r) and F(r)=u(r)/r.
+;; u(r) is normalized: ∫|u|² dr = 1.  F(r) = u(r)/r is the actual radial
+;; function entering the DWBA form factor.
+(let [h-bs   0.05
+      {:keys [u h r-max-bs E-bind]} (oh/o17-d52-bound-state h-bs)
+      n      (count u)
+      rs     (mapv #(* (double %) h) (range n))
+      us     (mapv double u)
+      ;; F(r) = u(r)/r, with F(0)=0 by convention
+      Fs     (mapv (fn [^long i ^double r]
+                     (if (< r 1e-6) 0.0 (/ (nth us i) r)))
+                   (range n) rs)]
+  (println (format "=== ¹⁷O 0d₅/₂ bound state  E_bind = %.4f MeV  V₀ found by bisection ===" E-bind))
+  (println (format "  Grid: h = %.3f fm, r_max = %.1f fm, %d points" h r-max-bs n))
+  (println (format "  Norm check: ∫|u|² dr ≈ %.6f  (should be 1)" (* h (reduce + (map #(* % %) us)))))
+  (println "")
+  (try
+    (let [_ (io/make-parents (io/file "output/o17_d52_u.png"))
+          chart (-> (c/xy-plot rs us
+                               :title "¹⁷O 0d₅/₂ — reduced radial wavefunction u(r)"
+                               :x-label "r (fm)"
+                               :y-label "u(r)  [fm^{-1/2}]"
+                               :series-label "u(r)"
+                               :legend true)
+                    (c/add-lines rs Fs :series-label "F(r) = u(r)/r"))]
+      (i/save chart "output/o17_d52_u.png" :width 800 :height 500)
+      (println "Plot saved: output/o17_d52_u.png"))
+    (catch Exception e
+      (println (format "Note: could not save bound-state plot (%s)." (.getMessage e)))))
+  (println ""))
 
 (let [h          0.08
       r-max      100.0

@@ -81,6 +81,19 @@
           (throw (ex-info "¹⁷O d₅/₂: could not extract wavefunction" {:v0 v0-found})))
         (t/normalize-bound-state (:wavefunction result) h)))))
 
+(defn o17-d52-bound-state
+  "Return the normalized ¹⁷O 0d₅/₂ reduced radial wavefunction **u(r)** as a map:
+  **{:u vec :h h :r-max-bs 25.0 :E-bind -4.1438}**.
+  The grid is **r = 0, h, 2h, …, r_max_bs** (length = r_max_bs/h + 1).
+  **u(r)** is normalized so that **∫₀^{r_max_bs} |u|² dr = 1**.
+  The radial wavefunction is **F(r) = u(r)/r**; plot **u** vs **r** for the reduced form."
+  ([] (o17-d52-bound-state 0.05))
+  ([h]
+   {:u       (o17-d52-bound-phi-n h nil)
+    :h       h
+    :r-max-bs 25.0
+    :E-bind  -4.1438}))
+
 (defn o16-dp-kinematics
   "Map **:mass-factor-i :mass-factor-f :e-cm-i :e-cm-f :k-i :k-f :Q-mev :M-target :M-residual**
   for **d + ¹⁶O → p + ¹⁷O**.
