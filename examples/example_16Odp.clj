@@ -85,7 +85,7 @@
   ;;
   ;; Elastic amplitude: f = f_C + f_N
   ;;   f_C = closed-form (T&N Eq. 3.1.81)  — handles ALL L; already convergent.
-  ;;   f_N = Σ_{L=0}^{L_max} (−i/k)(2L+1) P_L e^{2iσ_L}(S^n_L − 1)  — only L ≤ L_max matter.
+  ;;   f_N = Σ_{L=0}^{L_max} (−i/2k)(2L+1) P_L e^{2iσ_L}(S^n_L − 1)  — only L ≤ L_max matter.
   ;;   dσ/dΩ = |f_C + f_N|²  (functions/differential-cross-section-nuclear-cut).
   ;;
   ;;
@@ -94,7 +94,7 @@
   ;;
   ;; Elastic amplitude:  f = e^{2iσ_0} (f̃_C + f̃_N)
   ;;   f̃_C = −η/(2k sin²) · exp(−iη ln sin²)        [T&N 3.1.81 without σ_0]
-  ;;   f̃_N = Σ_{L=0}^{L_max} (−i/k)(2L+1) P_L · e^{2i(σ_L−σ_0)} · (S^n_L − 1)
+  ;;   f̃_N = Σ_{L=0}^{L_max} (−i/2k)(2L+1) P_L · e^{2i(σ_L−σ_0)} · (S^n_L − 1)
   ;;   |f|² = |f̃_C + f̃_N|²   (σ_0 phase cancels — no Gamma needed)
   ;;
   (println "=== Partial-wave S-matrix — entrance d+¹⁶O ===")
@@ -155,8 +155,8 @@
                                       ph-prod (fn/coulomb-phase-diff L eta)
                                       pl      (double (poly/eval-legendre-P L (m/cos th-rad)))
                                       bracket (mul ph-prod (subt2 Sn 1.0))
-                                      ;; (-i/k)(2L+1) P_L × bracket; -i = complex-polar(-π/2, 1)
-                                      contrib (mul (complex-polar (* -0.5 Math/PI) (/ (inc (* 2 L)) k))
+                                      ;; (-i/2k)(2L+1) P_L × bracket; -i = complex-polar(-π/2, 1)
+                                      contrib (mul (complex-polar (* -0.5 Math/PI) (/ (inc (* 2 L)) (* 2.0 k)))
                                                    pl bracket)]
                                   (add2 acc contrib)))
                               (complex-cartesian 0.0 0.0)
@@ -202,7 +202,7 @@
   (println (format "  Grid: h=%.3f fm, r_max=%.1f fm, L_max=%d  (raw 2°, spline 0.5°)" h r-max L-max))
   (println (format "  dσ/dΩ(0°)  ≈ %.6e mb/sr" s0))
   (println (format "  dσ/dΩ(70°) ≈ %.6e mb/sr" s70))
-  (println "  Optical model: handbook Table 5.1 (d+16O); p+17O still uses scaled Ca40 parameters.")
+  (println "  Optical model: handbook Table 5.1 (d+16O) + Table 5.2 (p+17O).")
   (println "")
 
   (try

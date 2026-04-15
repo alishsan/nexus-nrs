@@ -2675,6 +2675,22 @@
     (handbook-F-lsj-radial-from-neutron-bound-u neutron-u-reduced h)
     u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio))
 
+(defn handbook-radial-integral-I-zr-from-neutron-bound-complex
+  "Same as **`handbook-radial-integral-I-zr-from-neutron-bound`** but keeps **complex** distorted waves.
+
+  Uses **`austern-radial-integral-I-zr-eq-5-5-from-u-complex`**: the integrand is
+  **F(r) · f_{αL}(r) · f_{βL}((M_A/M_B)r) · r²** with **f** = **u/r** preserved as complex
+  (no **Re()** stripping). Returns a **complex** number **I_{L_β L_α}**.
+
+  Required when the optical potential is absorptive (imaginary part non-zero): taking only
+  **Re(u)** loses the **Im(u_α)·Im(u_β)** cross-term and the imaginary part of **I**, which
+  distorts the interference pattern between even- and odd-**L_α** partial waves and can
+  produce an unphysically large backward-angle cross section."
+  [neutron-u-reduced u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
+  (austern-radial-integral-I-zr-eq-5-5-from-u-complex
+    (handbook-F-lsj-radial-from-neutron-bound-u neutron-u-reduced h)
+    u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio))
+
 (defn austern-reduced-amplitude-beta-sj-ellm
   "Reduced amplitude **β_{sj}^{ℓm}** exactly as **N. Austern**, *Direct Nuclear Reaction
   Theories* (Wiley, 1970), **Eq. (4.60), p. 84**:
@@ -3542,6 +3558,34 @@
   [R L eta rho]
   (distorted-wave-coulomb-S-from-R R L eta rho))
 
+(defn- coulomb-regular-init
+  "Coulomb regular function **F_L(η, ρ)** at small **ρ** via the analytical leading term:
+
+  **F_L(η, ρ) ≈ C_L(η) · ρ^{L+1}**
+
+  where the Gamow–penetration factor **C_L(η)** is computed via the recursion:
+  - **C_0(η) = exp(−πη/2) · √(πη / sinh(πη))**  [for η>0; → 1 when η→0]
+  - **C_{L+1}(η) = C_L(η) · √((L+1)² + η²) / ((L+1)(2L+3))**
+
+  Used as the initial condition **u(h) = F_L(η, k·h)** for the Numerov integrator in
+  `distorted-wave-optical` (`:coulomb-init-eta` option).  The Tricomi-based `Hankel+` is
+  numerically unstable at **k·h ≲ 0.1**, so we use this formula instead."
+  ^double [^long L ^double eta ^double rho]
+  (let [eta  (Math/abs eta)   ; η is non-negative by convention
+        C0   (if (< eta 1e-12)
+               1.0            ; η→0: C_0 → 1, F_0 → sin(ρ)/ρ·ρ ≈ ρ
+               (let [pie (* Math/PI eta)]
+                 (* (Math/exp (* -0.5 pie))
+                    (Math/sqrt (/ pie (Math/sinh pie))))))
+        CL   (loop [C (double C0) l (long 0)]
+               (if (>= l L)
+                 C
+                 (recur (* C (/ (Math/sqrt (+ (double (* (inc l) (inc l))) (* eta eta)))
+                                (* (double (inc l)) (double (+ (* 2 l) 3)))))
+                        (inc l))))
+        rhoL+1 (Math/pow rho (inc L))]
+    (* CL rhoL+1)))
+
 (defn distorted-wave-optical
   "Reduced radial **u = r χ** (complex Numerov); DWBA uses **R = u/r**.
 
@@ -3549,16 +3593,23 @@
    and spoil **`:raw`** cross-**L** amplitudes (rescaling cancels in **R = u/(a u′)** but not in stored **u(r)**). Elastic
    **S**-only paths can use **`functions/r-matrix-complex-imag-ws`** (**`numerov-append-and-renormalize`** there).
 
-   **`:normalize-mode`** (default **`:raw`**): **`:raw`** — no post-rescaling (preserves relative strength between partial waves when you sum many **L**). **`:max`** — scale **u** so **max |u| = 1** on the grid (**not** DWUCK’s unit incoming-flux convention). **`:coulomb-tail`** — **|**u**|∝|H_L^+|** vs **ρ = `:tail-rho`**, **η = `:tail-eta`** at the last sample (unsafe with heavy absorption). **`:bind-flux`** — DWUCK **`BIND`**-style outer fix (**`FNORM = k/SCALE`**, **F2 = 1**): **SCALE = |H⁻(L,η, k r_last)|**,
+   **`:normalize-mode`** (default **`:raw`**): **`:raw`** — no post-rescaling (preserves relative strength between partial waves when you sum many **L**). **`:max`** — scale **u** so **max |u| = 1** on the grid (**not** DWUCK’s unit incoming-flux convention). **`:coulomb-tail`** — stable RMS normalization: **u ← u · |H_L^+(tail-rho)| / RMS(|u|)** where RMS runs over the last **~3 wavelengths** (avoids node sensitivity — **|u(r_max)| ≈ 0** near a node inflates that **L** and breaks coherent-sum convergence). Pass **`:tail-eta`**, **`:tail-rho`**. **`:bind-flux`** — DWUCK **`BIND`**-style outer fix (**`FNORM = k/SCALE`**, **F2 = 1**): **SCALE = |H⁻(L,η, k r_last)|**,
    then **u(r_i) ← u(r_i) · SCALE/(k r_i)** for **i ≥ 1** (**u(0)=0**). Pass **`:bind-eta`** (Sommerfeld **η** for the channel; **0** if neutral). Omits the full double-interval **DET** match in **`BIND`**; use for DWUCK-like flux scaling vs **`:raw`**.
 
    For the elastic **R → S** quotient, use **`distorted-wave-numerov-R-for-smatrix`** + **`distorted-wave-coulomb-S-from-numerov-R`**."
   [E l s j optical-potential-fn r-max h mass-factor
-   & {:keys [normalize-mode tail-eta tail-rho bind-eta]
+   & {:keys [normalize-mode tail-eta tail-rho bind-eta coulomb-init-eta]
       :or {normalize-mode :raw bind-eta 0.0}}]
   (let [steps (int (/ r-max h))
         u0 (complex-cartesian 0.0 0.0)
-        u1-init (Math/pow h (inc l))
+        ;; Use correct Coulomb initial condition F_L(η, kh) when coulomb-init-eta is
+        ;; provided. F_L ≈ C_L(η)·(kh)^{L+1} from the analytical small-ρ formula
+        ;; (Hankel+ is inaccurate at kh≲0.1). This ensures high-L partial waves have the
+        ;; correct nuclear-surface amplitude; h^{L+1} overestimates by 1/(C_L·k^{L+1}).
+        k-ch (Math/sqrt (* (double mass-factor) (double E)))
+        u1-init (if (some? coulomb-init-eta)
+                  (coulomb-regular-init (long l) (double coulomb-init-eta) (* k-ch (double h)))
+                  (Math/pow h (inc l)))
         u1 (complex-cartesian u1-init 0.0)
         rs (take (+ steps 2) (iterate #(+ % h) 0.0))
         fs (mapv (fn [r]
@@ -3583,9 +3634,22 @@
             (let [eta (double tail-eta)
                   rho (double tail-rho)
                   Hc (Hankel+ l eta rho)
-                  Hmag (if (number? Hc) (Math/abs Hc) (mag Hc))]
-              (when (and (pos? ul) (pos? Hmag) (Double/isFinite Hmag) (Double/isFinite ul))
-                (/ Hmag ul))))
+                  Hmag (if (number? Hc) (Math/abs Hc) (mag Hc))
+                  ;; RMS over last ~3 oscillation periods avoids node sensitivity:
+                  ;; a single-point |u(r_max)| blows up when r_max falls near a node,
+                  ;; giving each L a different scale and breaking coherent-sum convergence.
+                  n-total (count results)
+                  n-osc (min (int (/ n-total 2))
+                             (max 20 (int (Math/round (/ (* 6.0 Math/PI) (* k-ch (double h)))))))
+                  tail-vec (subvec results (- n-total n-osc) n-total)
+                  sum-sq (double (reduce (fn [^double acc u]
+                                          (let [m (if (number? u) (Math/abs u) (mag u))]
+                                            (+ acc (* m m))))
+                                        0.0
+                                        tail-vec))
+                  rms (Math/sqrt (/ sum-sq n-osc))]
+              (when (and (pos? rms) (pos? Hmag) (Double/isFinite Hmag) (Double/isFinite rms))
+                (/ Hmag rms))))
           max-mag (transduce (map #(if (number? %)
                                      (Math/abs %)
                                      (mag %)))

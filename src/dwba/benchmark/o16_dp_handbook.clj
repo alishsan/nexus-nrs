@@ -25,6 +25,62 @@
 (defn- m16 [] (* 16.0 931.494))
 (defn- m17 [] (* 17.0 931.494))
 
+(defn- o17-d52-neutron-mass-factor
+  "Reduced mass factor 2μ/(ℏc)² for a neutron bound in ¹⁶O field."
+  ^double []
+  (let [m-n  939.565
+        m-16 (m16)
+        mu   (/ (* m-n m-16) (+ m-n m-16))]
+    (mass-factor-from-mu mu)))
+
+(defn- o17-d52-bound-phi-n
+  "Find the ¹⁷O 0d₅/₂ single-particle bound state by adjusting V₀ so that the
+  l=2 eigenvalue equals **−4.1438 MeV** (neutron separation energy of ¹⁷O ground state).
+
+  Geometry: standard r₀=1.25 fm (R₀=r₀·16^{1/3}≈3.15 fm), a₀=0.65 fm, no explicit spin-orbit
+  (the central WS is adjusted to reproduce the separation energy directly).
+
+  **Note:** the bound state is integrated only to `r_max_bs` (≤25 fm), since the physical
+  wavefunction is negligible beyond ~20 fm.  Extending the grid further accumulates the
+  Numerov growing-solution error, which corrupts the normalization integral.
+
+  Returns the normalized reduced radial wavefunction **u(r)** on the grid r=0,h,2h,… up to
+  r_max_bs.  The radial DWBA integral automatically truncates at min(|F|,|χ|) points."
+  [h _r-max]
+  (let [mf-n    (o17-d52-neutron-mass-factor)
+        R0      (* 1.25 (Math/pow 16.0 (/ 1.0 3.0)))
+        a0      0.65
+        opts    {:no-spin-orbit true}
+        r-max-bs 25.0          ; bound state grid: stop before growing tail contaminates norm
+        E-bind  -4.1438
+        find-eigen
+        (fn [V0]
+          (binding [fn/mass-factor mf-n]
+            (:energy (t/find-bound-state-energy
+                      [V0 R0 a0] 2 r-max-bs h
+                      (- (+ (double V0) 5.0)) -0.05 0.005 opts))))
+        ;; Bisect V0 in [55, 62]: eigen(55)≈-2.94, eigen(62)≈-6.40 MeV
+        v0-found
+        (loop [a 55.0 b 62.0 n 0]
+          (let [mid (/ (+ a b) 2.0)
+                e   (or (find-eigen mid) -0.001)]
+            (if (or (> n 30) (< (Math/abs (- e E-bind)) 0.002))
+              mid
+              (if (> e E-bind)          ; eigenvalue too shallow → increase V0
+                (recur mid b (inc n))
+                (recur a mid (inc n))))))
+        _ (let [e (find-eigen v0-found)]
+            (when (> (Math/abs (- (double e) E-bind)) 0.1)
+              (throw (ex-info "¹⁷O d₅/₂ V₀ search did not converge"
+                              {:v0 v0-found :e-found e :e-target E-bind}))))]
+    (binding [fn/mass-factor mf-n]
+      (let [result (t/find-bound-state-energy
+                    [v0-found R0 a0] 2 r-max-bs h
+                    (- (+ v0-found 5.0)) -0.05 0.005 opts)]
+        (when-not result
+          (throw (ex-info "¹⁷O d₅/₂: could not extract wavefunction" {:v0 v0-found})))
+        (t/normalize-bound-state (:wavefunction result) h)))))
+
 (defn o16-dp-kinematics
   "Map **:mass-factor-i :mass-factor-f :e-cm-i :e-cm-f :k-i :k-f :Q-mev :M-target :M-residual**
   for **d + ¹⁶O → p + ¹⁷O**.
@@ -145,8 +201,7 @@
         (o16-dp-kinematics e-cm-i)
         zr (t/handbook-zr-chi-exit-mass-ratio M-target M-residual)
         ell (long transfer-ell)
-        phi-n (t/normalize-bound-state
-               (t/solve-bound-state-numerov -4.1438 2 56.0 2.85 0.6 0.048 h r-max {:no-spin-orbit true}) h)
+        phi-n (o17-d52-bound-phi-n h r-max)
         z12 (* 1.44 1.0 8.0)
         eta-i (sommerfeld-eta-channel e-cm-i mass-factor-i z12)
         eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)
@@ -158,32 +213,36 @@
            (if (= :raw chi-normalize-mode)
              (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
                                        (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
-                                       r-max h mass-factor-i)
+                                       r-max h mass-factor-i
+                                       :coulomb-init-eta eta-i)
              (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
                                        (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
                                        r-max h mass-factor-i
                                        :normalize-mode chi-normalize-mode
-                                       :tail-eta eta-i :tail-rho rho-i))))
+                                       :tail-eta eta-i :tail-rho rho-i
+                                       :coulomb-init-eta eta-i))))
         chi-beta!
         (memoize
          (fn [^long Lb]
            (if (= :raw chi-normalize-mode)
              (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
                                        (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
-                                       r-max h mass-factor-f)
+                                       r-max h mass-factor-f
+                                       :coulomb-init-eta eta-f)
              (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
                                        (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
                                        r-max h mass-factor-f
                                        :normalize-mode chi-normalize-mode
-                                       :tail-eta eta-f :tail-rho rho-f))))]
+                                       :tail-eta eta-f :tail-rho rho-f
+                                       :coulomb-init-eta eta-f))))]
     (vec
      (for [La (range 0 (inc (long L-max)))
            Lb (t/handbook-zr-partial-wave-L-beta-values La ell (long L-max))
-           :let [Ireal (t/handbook-radial-integral-I-zr-from-neutron-bound
-                        phi-n (chi-alpha! La) (chi-beta! Lb) h
-                        M-target M-residual k-i k-f zr)]
-           :when (> (Math/abs (double Ireal)) 1e-30)]
-       {:L-alpha La :L-beta Lb :I Ireal}))))
+           :let [Icmplx (t/handbook-radial-integral-I-zr-from-neutron-bound-complex
+                         phi-n (chi-alpha! La) (chi-beta! Lb) h
+                         M-target M-residual k-i k-f zr)]
+           :when (> (mag Icmplx) 1e-30)]
+       {:L-alpha La :L-beta Lb :I Icmplx}))))
 
 (defn o16-dp-T-squared-sum-handbook
   [theta-rad radial-rows-sigma D0 & {:keys [coherent-m-beta?] :or {coherent-m-beta? false}}]
