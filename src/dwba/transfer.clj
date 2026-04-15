@@ -2529,7 +2529,12 @@
 
 (defn austern-radial-integrand-zr-F-Ra-Rb-r2-complex
   "Like **`austern-radial-integrand-zr-F-Ra-Rb-r2`**, but **f_α**, **f_β** may be **complex** (**R = u/r**).
-  Entries: **F(r) f_α(r) f_β((M_A/M_B)r) r²** (same indexing as real ZR DWBA)."
+  Entries: **F(r) f_α(r) f_β((M_A/M_B)r) r²** (same indexing as real ZR DWBA).
+
+  **Convention:** both channels use the outgoing (+) Numerov solution directly
+  (standard DWBA practice, consistent with DWUCK4).  For real potentials this equals
+  the post-form integrand **F χ_α^{(+)} [χ_β^{(-)*}]** exactly by time-reversal;
+  for complex potentials it is the standard approximation."
   [F-vec u-alpha u-beta h zr-mass-ratio]
   (let [h* (double h)
         n (min (count F-vec) (count u-alpha) (count u-beta))

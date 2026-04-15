@@ -330,26 +330,47 @@
                       La-vals)
       Re-I      (mapv re I-vals)
       Im-I      (mapv im I-vals)
-      La-dbl    (mapv double La-vals)]
+      La-dbl    (mapv double La-vals)
+      ;; Coulomb-phase-rotated: I_rot = e^{i(σ_La+σ_Lb)} × I
+      ;; Handbook convention (Fig 5.3): plots Re = Im(e^{iσ}I), Im = -Re(e^{iσ}I),
+      ;; i.e. the quantity (-i) × e^{i(σ_La+σ_Lb)} × I.
+      ;; The extra (-i) factor comes from the overall (-i/2k) phase in the T-matrix amplitude.
+      sig-rot      (mapv (fn [^long La]
+                           (+ (fn/coulomb-sigma-L La eta-i) (fn/coulomb-sigma-L La eta-f)))
+                         La-vals)
+      ;; e^{iσ}·I = (Rr + i Ir) where Rr = Re·cos - Im·sin, Ir = Re·sin + Im·cos
+      Rr-rot       (mapv (fn [^long i]
+                           (let [I (nth I-vals i) s (nth sig-rot i)]
+                             (- (* (re I) (Math/cos s)) (* (im I) (Math/sin s)))))
+                         (range (count La-vals)))
+      Ir-rot       (mapv (fn [^long i]
+                           (let [I (nth I-vals i) s (nth sig-rot i)]
+                             (+ (* (re I) (Math/sin s)) (* (im I) (Math/cos s)))))
+                         (range (count La-vals)))
+      ;; Handbook "Re" = Im(e^{iσ}I) = Ir-rot
+      ;; Handbook "Im" = -Re(e^{iσ}I) = -Rr-rot
+      HbkRe        Ir-rot
+      HbkIm        (mapv - Rr-rot)]
   (println "=== Radial integral I_{L_α} — 2s₁/₂ transfer  (J_α=L_α−1, L_β=L_α, J_β=L_α−½) ===")
-  (println (format "  %-4s  %14s  %14s  %14s" "L_α" "Re(I)" "Im(I)" "|I|"))
+  (println "    Handbook convention: 'Re' = Im(e^{iσ}I),  'Im' = -Re(e^{iσ}I)  [factor (-i)×e^{iσ}]")
+  (println (format "  %-4s  %14s  %14s  %14s  %14s  %14s"
+                   "L_α" "Re(I) raw" "Im(I) raw" "|I|" "Hbk Re" "Hbk Im"))
   (doseq [i (range (count La-vals))]
-    (let [La (nth La-vals i)
-          ri (nth Re-I i)
-          ii (nth Im-I i)
-          mi (mag (nth I-vals i))]
-      (println (format "  %-4d  %14.6e  %14.6e  %14.6e" La ri ii mi))))
+    (let [La (nth La-vals i)]
+      (println (format "  %-4d  %14.6e  %14.6e  %14.6e  %14.6e  %14.6e"
+                       La (nth Re-I i) (nth Im-I i) (mag (nth I-vals i))
+                       (nth HbkRe i) (nth HbkIm i)))))
   (println "")
   (try
     (let [_ (io/make-parents (io/file "output/o16dp_radial_I_s12.png"))
-          chart (-> (c/xy-plot La-dbl Re-I
-                               :title "¹⁶O(d,p) — Radial integral I_{L_α}  (2s₁/₂, J_α=L_α−1)"
+          chart (-> (c/xy-plot La-dbl HbkRe
+                               :title "¹⁶O(d,p) — Radial integral I_{L_α}  (2s₁/₂, Fig 5.3 convention)"
                                :x-label "L_α"
-                               :y-label "I_{L_α}  [fm³]"
-                               :series-label "Re(I)"
+                               :y-label "(-i)·e^{iσ}·I_{L_α}  [fm³]"
+                               :series-label "Re  = Im(e^{iσ}I)"
                                :legend true)
-                    (c/add-lines La-dbl Im-I :series-label "Im(I)"))]
-      (i/save chart "output/o16dp_radial_I_s12.png" :width 800 :height 500)
+                    (c/add-lines La-dbl HbkIm :series-label "Im  = −Re(e^{iσ}I)"))]
+      (i/save chart "output/o16dp_radial_I_s12.png" :width 900 :height 500)
       (println "Plot saved: output/o16dp_radial_I_s12.png"))
     (catch Exception e
       (println (format "Note: could not save radial-I plot (%s)." (.getMessage e)))))
