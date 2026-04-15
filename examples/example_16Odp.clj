@@ -10,7 +10,8 @@
 ;; Load: `(load-file "examples/example_16Odp.clj")` from project root.
 ;;
 ;; Writes **output/o17_bound_states.png** (0d₅/₂ + 2s₁/₂ u(r) and F(r)=u(r)/r),
-;; **output/16Odp_dcs.png** (linear y) and **output/16Odp_dcs_log.png** (log₁₀ y-axis).
+;; **output/16Odp_dcs.png** (linear y), **output/16Odp_dcs_log.png** (log₁₀ y-axis),
+;; **output/o16dp_radial_I_s12.png** (Re/Im of I_{L_α} for 2s₁/₂ transfer, Fig 5.3 coupling).
 
 (ns examples.example-16Odp
   (:require [dwba.benchmark.o16-dp-handbook :as oh]
@@ -272,3 +273,84 @@
 
   (println "\n=== Done ===")
   s0)
+
+;; ── Radial integral I_{L_α} vs L_α — 2s₁/₂ transfer, Fig 5.3 coupling ──────
+;;
+;; For ℓ=0 (s₁/₂) transfer the triangle rule forces L_β = L_α.
+;; Fig 5.3 uses the specific j-couplings:
+;;   J_α  = L_α − 1    (deuteron sub-channel with j_d = L − 1)
+;;   L_β  = L_α
+;;   J_β  = L_α − ½   (proton sub-channel  with j_p = L − ½)
+;;
+;; For L_α = 0 → J_α = −1 (forbidden); plot starts at L_α = 1.
+;; Distorted waves use :coulomb-tail normalization + Coulomb Numerov init.
+(let [h         0.05
+      r-max     30.0
+      L-max     15
+      kin       (oh/o16-dp-kinematics)
+      {:keys [mass-factor-i mass-factor-f e-cm-i e-cm-f k-i k-f
+              M-target M-residual]} kin
+      z12       (* 1.44 1.0 8.0)
+      eta-i     (binding [fn/mass-factor mass-factor-i fn/Z1Z2ee z12]
+                  (fn/channel-sommerfeld-eta e-cm-i))
+      eta-f     (binding [fn/mass-factor mass-factor-f fn/Z1Z2ee z12]
+                  (fn/channel-sommerfeld-eta e-cm-f))
+      rho-i     (* k-i r-max)
+      rho-f     (* k-f r-max)
+      zr        (t/handbook-zr-chi-exit-mass-ratio M-target M-residual)
+      ;; 2s₁/₂ bound state (1 radial node, l=0, E_bind = −3.2728 MeV)
+      phi-s12   (:u (oh/o17-s12-bound-state h))
+      ;; Memoized distorted waves (Fig 5.3 j-couplings)
+      chi-a!    (memoize
+                 (fn [^long La]
+                   (let [ja (max 0.0 (- (double La) 1.0))]
+                     (t/distorted-wave-optical
+                      e-cm-i La 1.0 ja
+                      (oh/optical-u-deuteron-o16 La 1.0 ja)
+                      r-max h mass-factor-i
+                      :normalize-mode :coulomb-tail
+                      :tail-eta eta-i :tail-rho rho-i
+                      :coulomb-init-eta eta-i))))
+      chi-b!    (memoize
+                 (fn [^long Lb]
+                   (let [jb (max 0.5 (- (double Lb) 0.5))]
+                     (t/distorted-wave-optical
+                      e-cm-f Lb 0.5 jb
+                      (oh/optical-u-proton-o17 Lb 0.5 jb)
+                      r-max h mass-factor-f
+                      :normalize-mode :coulomb-tail
+                      :tail-eta eta-f :tail-rho rho-f
+                      :coulomb-init-eta eta-f))))
+      ;; Compute I for each L_α (L_β = L_α for ℓ=0)
+      La-vals   (vec (range 1 (inc L-max)))
+      I-vals    (mapv (fn [^long La]
+                        (t/handbook-radial-integral-I-zr-from-neutron-bound-complex
+                         phi-s12 (chi-a! La) (chi-b! La)
+                         h M-target M-residual k-i k-f zr))
+                      La-vals)
+      Re-I      (mapv re I-vals)
+      Im-I      (mapv im I-vals)
+      La-dbl    (mapv double La-vals)]
+  (println "=== Radial integral I_{L_α} — 2s₁/₂ transfer  (J_α=L_α−1, L_β=L_α, J_β=L_α−½) ===")
+  (println (format "  %-4s  %14s  %14s  %14s" "L_α" "Re(I)" "Im(I)" "|I|"))
+  (doseq [i (range (count La-vals))]
+    (let [La (nth La-vals i)
+          ri (nth Re-I i)
+          ii (nth Im-I i)
+          mi (mag (nth I-vals i))]
+      (println (format "  %-4d  %14.6e  %14.6e  %14.6e" La ri ii mi))))
+  (println "")
+  (try
+    (let [_ (io/make-parents (io/file "output/o16dp_radial_I_s12.png"))
+          chart (-> (c/xy-plot La-dbl Re-I
+                               :title "¹⁶O(d,p) — Radial integral I_{L_α}  (2s₁/₂, J_α=L_α−1)"
+                               :x-label "L_α"
+                               :y-label "I_{L_α}  [fm³]"
+                               :series-label "Re(I)"
+                               :legend true)
+                    (c/add-lines La-dbl Im-I :series-label "Im(I)"))]
+      (i/save chart "output/o16dp_radial_I_s12.png" :width 800 :height 500)
+      (println "Plot saved: output/o16dp_radial_I_s12.png"))
+    (catch Exception e
+      (println (format "Note: could not save radial-I plot (%s)." (.getMessage e)))))
+  (println ""))
