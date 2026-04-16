@@ -9,14 +9,17 @@
 
   **Amplitude:** **T_m ≈ D₀ √(2ℓ+1) β_m** and **`transfer-differential-cross-section`** → **mb/sr** (same dimensional unit as typical handbook **mb/sr** plots).
 
-  **Distorted waves:** default **`:chi-normalize-mode` `:coulomb-tail`** (**|**u**| ∝ |H_L^+|** at **ρ = k r_max** per channel). Optional **`:raw`** or **`:max`**. With strong absorption, tail match can mis-scale **χ**; use **`:raw`** for relative **L** weights. Elastic **R → S** uses **`distorted-wave-numerov-R-for-smatrix`** + **`distorted-wave-coulomb-S-from-numerov-R`**. Match **potentials, energies, and conventions** from any reference figure. For **Ca40(d,p)** vs **DWUCK4** listing scale, see **`ca40-dp-flux-scale-to-embedded-dwuck`**.
+  **Distorted waves:** default **`:chi-normalize-mode` `:coulomb-tail`** (tail RMS matched to **|H_L^+|** at **ρ = k r_max**). Alternatives: **`:raw`** (Numerov scale only), **`:max`**, **`:bind-flux`** — DWUCK **BIND**-style outer fix (**`distorted-wave-optical`** **`:bind-eta`** = channel **η**), closer to incoming-flux / **H^−** Coulomb normalization than **`:coulomb-tail`**. Compare modes when benchmarking DWUCK or fixing **χ** scale without **`:imag-scale`**. Elastic **R → S** uses **`distorted-wave-numerov-R-for-smatrix`** + **`distorted-wave-coulomb-S-from-numerov-R`**. For **Ca40(d,p)** vs **DWUCK4** listing scale, see **`ca40-dp-flux-scale-to-embedded-dwuck`**.
 
   **Spin:** **(2J_f+1)/(2J_i+1)** for **J(¹⁶O)=0**, **J(¹⁷O)=5/2** and unpolarized deuteron **× 1/3** (same pattern as **`ca40-dp-dsigma-mb-sr`**, no extra **½** — that factor is for **(p,d)** entrance proton).
 
-  Optics are **Ca40 listing depths/radii scaled** to **A≈16–17**, **Z=8** — illustrative; tune before comparing to experiment or a specific handbook figure."
+  Optics are **Ca40 listing depths/radii scaled** to **A≈16–17**, **Z=8** — illustrative; tune before comparing to experiment or a specific handbook figure.
+
+  **Backward angles:** with tabulated imaginary depths, ZR + **`:coulomb-tail`** χ can yield **σ(180°) > σ(90°)**.
+  Optional **`:imag-scale`** (< 1) multiplies **Im U** on both channels (see **`wrap-optical-scale-imag`**); the example script uses **~0.48** so **σ(180°) < σ(90°)**. Optional **`:attach-coulomb-sigma? false`** omits explicit **e^{iσ}** on radial rows (reduces backward somewhat even at **`:imag-scale` 1**)."
   (:require [dwba.transfer :as t]
             [functions :as fn :refer [mass-factor-from-mu channel-sommerfeld-eta lab-to-cm-energy]]
-            [complex :refer [mag mul add complex-cartesian]]))
+            [complex :refer [mag mul add complex-cartesian re im]]))
 
 (def ^:private o16-dp-bound-ell 2)
 (def ^:private o16-dp-J-i 0.0)
@@ -234,6 +237,17 @@
             fn/Z1Z2ee z1z2ee]
     (channel-sommerfeld-eta e-cm)))
 
+(defn- wrap-optical-scale-imag
+  "Scale only the **imaginary** part of **U(r)** (absorption) by **s**, keeping **Re U** fixed.
+  Use **0 < s < 1** to probe sensitivity of the angular distribution to imaginary depth; **s = 1**
+  is the default physical potential."
+  [opt-fn ^double s]
+  (if (>= (Math/abs (- s 1.0)) 1e-12)
+    (fn [^double r]
+      (let [z (opt-fn r)]
+        (complex-cartesian (re z) (* s (im z)))))
+    opt-fn))
+
 (defn- o16-dp-cm-asymmetry-factor
   ^double [^double theta-rad ^double kappa]
   (if (< (Math/abs kappa) 1e-15)
@@ -255,12 +269,16 @@
   "Build **{:L-alpha :L-beta :I}** with **`handbook-radial-integral-I-zr-from-neutron-bound`**.
   **φ_n** — neutron in **¹⁷O** (**l=2**, illustrative well); **χ_α** — **d** on **¹⁶O**; **χ_β** — **p** on **¹⁷O**.
 
-  **`:chi-normalize-mode`** — **`:coulomb-tail`** (default), **`:raw`**, or **`:max`** (**`distorted-wave-optical`**)."
-  [& {:keys [r-max h L-max e-cm-i transfer-ell chi-normalize-mode]
+  **`:chi-normalize-mode`** — **`:coulomb-tail`** (default), **`:raw`**, **`:max`**, or **`:bind-flux`**
+  (**`distorted-wave-optical`**; **`:bind-flux`** uses per-channel **η** as **`:bind-eta`**).
+  **`:imag-scale`** — multiply **Im U** of **both** entrance and exit optical potentials by this factor (**1.0** default);
+  values **< 1** reduce absorption and often **lower** backward-angle DWBA cross sections that were inflated by the
+  imaginary **χ_α χ_β** interference (see example script)."
+  [& {:keys [r-max h L-max e-cm-i transfer-ell chi-normalize-mode imag-scale]
       :or {r-max 100.0 h 0.05 L-max 20 transfer-ell o16-dp-bound-ell
-           chi-normalize-mode :coulomb-tail}}]
-  (when-not (#{:raw :max :coulomb-tail} chi-normalize-mode)
-    (throw (ex-info "o16-dp-radial-I-rows-handbook: :chi-normalize-mode must be :raw, :max, or :coulomb-tail"
+           chi-normalize-mode :coulomb-tail imag-scale 1.0}}]
+  (when-not (#{:raw :max :coulomb-tail :bind-flux} chi-normalize-mode)
+    (throw (ex-info "o16-dp-radial-I-rows-handbook: :chi-normalize-mode must be :raw, :max, :coulomb-tail, or :bind-flux"
                     {:chi-normalize-mode chi-normalize-mode})))
   (let [e-cm-i (double (or e-cm-i (:e-cm-i (o16-dp-kinematics))))
         {:keys [mass-factor-i mass-factor-f e-cm-f k-i k-f M-target M-residual]}
@@ -273,16 +291,34 @@
         eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)
         rho-i (* k-i r-max)
         rho-f (* k-f r-max)
+        imag-s (double imag-scale)
+        Ud (fn [^long La]
+              (wrap-optical-scale-imag
+                (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
+                imag-s))
+        Up (fn [^long Lb]
+              (wrap-optical-scale-imag
+                (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
+                imag-s))
         chi-alpha!
         (memoize
          (fn [^long La]
-           (if (= :raw chi-normalize-mode)
+           (cond
+             (= :raw chi-normalize-mode)
              (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
-                                       (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
+                                       (Ud La)
                                        r-max h mass-factor-i
                                        :coulomb-init-eta eta-i)
+             (= :bind-flux chi-normalize-mode)
              (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
-                                       (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
+                                       (Ud La)
+                                       r-max h mass-factor-i
+                                       :normalize-mode :bind-flux
+                                       :bind-eta eta-i
+                                       :coulomb-init-eta eta-i)
+             :else
+             (t/distorted-wave-optical e-cm-i La 1.0 (deuteron-j-for-partial-wave La)
+                                       (Ud La)
                                        r-max h mass-factor-i
                                        :normalize-mode chi-normalize-mode
                                        :tail-eta eta-i :tail-rho rho-i
@@ -290,13 +326,22 @@
         chi-beta!
         (memoize
          (fn [^long Lb]
-           (if (= :raw chi-normalize-mode)
+           (cond
+             (= :raw chi-normalize-mode)
              (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
-                                       (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
+                                       (Up Lb)
                                        r-max h mass-factor-f
                                        :coulomb-init-eta eta-f)
+             (= :bind-flux chi-normalize-mode)
              (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
-                                       (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
+                                       (Up Lb)
+                                       r-max h mass-factor-f
+                                       :normalize-mode :bind-flux
+                                       :bind-eta eta-f
+                                       :coulomb-init-eta eta-f)
+             :else
+             (t/distorted-wave-optical e-cm-f Lb 0.5 (proton-j-for-partial-wave Lb)
+                                       (Up Lb)
                                        r-max h mass-factor-f
                                        :normalize-mode chi-normalize-mode
                                        :tail-eta eta-f :tail-rho rho-f
@@ -337,25 +382,28 @@
 (defn o16-dp-dsigma-handbook-mb-sr
   "**dσ/dΩ (mb/sr)** — handbook **F_n**, **(5.5)** radial **I**, **`handbook-zr-multipole-amplitude-sum`**, **`transfer-differential-cross-section`**.
 
-  **`:chi-normalize-mode`** — passed to **`o16-dp-radial-I-rows-handbook`** when **`:radial-rows-sigma`** is omitted (**`:coulomb-tail`** default)."
+  **`:chi-normalize-mode`** — passed to **`o16-dp-radial-I-rows-handbook`** when **`:radial-rows-sigma`** is omitted (**`:coulomb-tail`** default; try **`:bind-flux`** for DWUCK-like **χ** scale)."
   [theta-deg & {:keys [e-cm-i r-max h L-max S-factor radial-rows-sigma
-                       coherent-m-beta? cm-asymmetry-kappa L-alpha-only chi-normalize-mode]
+                       coherent-m-beta? cm-asymmetry-kappa L-alpha-only chi-normalize-mode
+                       imag-scale attach-coulomb-sigma?]
                 :or {r-max 100.0 h 0.05 L-max 20 S-factor 1.0
                      coherent-m-beta? false
                      cm-asymmetry-kappa 0.0
-                     chi-normalize-mode :coulomb-tail}}]
+                     chi-normalize-mode :coulomb-tail imag-scale 1.0
+                     attach-coulomb-sigma? true}}]
   (let [eci (if (some? e-cm-i) (double e-cm-i) (:e-cm-i (o16-dp-kinematics)))
         {:keys [mass-factor-i mass-factor-f e-cm-f k-i k-f]} (o16-dp-kinematics eci)
         z12 (* 1.44 1.0 8.0)
         eta-i (sommerfeld-eta-channel eci mass-factor-i z12)
         eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)
-        rows-sig (o16-dp-filter-rows-by-L-alpha
-                  (or radial-rows-sigma
-                      (o16-dp-rows-coulomb-sigma
-                       (o16-dp-radial-I-rows-handbook :r-max r-max :h h :L-max L-max :e-cm-i eci
-                         :chi-normalize-mode chi-normalize-mode)
-                       eta-i eta-f))
-                  L-alpha-only)
+        rows0 (if (some? radial-rows-sigma)
+                radial-rows-sigma
+                (let [br (o16-dp-radial-I-rows-handbook :r-max r-max :h h :L-max L-max :e-cm-i eci
+                                :chi-normalize-mode chi-normalize-mode :imag-scale imag-scale)]
+                  (if attach-coulomb-sigma?
+                    (o16-dp-rows-coulomb-sigma br eta-i eta-f)
+                    br)))
+        rows-sig (o16-dp-filter-rows-by-L-alpha rows0 L-alpha-only)
         D0 (t/zero-range-constant :d-p)
         theta-rad (* (double theta-deg) (/ Math/PI 180.0))
         T-sq (o16-dp-T-squared-sum-handbook theta-rad rows-sig D0
@@ -369,20 +417,24 @@
 
 (defn o16-dp-angular-curve-handbook-mb-sr
   [theta-degrees & {:keys [e-cm-i r-max h L-max S-factor
-                           coherent-m-beta? cm-asymmetry-kappa L-alpha-only chi-normalize-mode]
+                           coherent-m-beta? cm-asymmetry-kappa L-alpha-only chi-normalize-mode
+                           imag-scale attach-coulomb-sigma?]
                     :or {r-max 100.0 h 0.05 L-max 20 S-factor 1.0
                          coherent-m-beta? false
                          cm-asymmetry-kappa 0.0
-                         chi-normalize-mode :coulomb-tail}}]
+                         chi-normalize-mode :coulomb-tail imag-scale 1.0
+                         attach-coulomb-sigma? true}}]
   (let [eci (if (some? e-cm-i) (double e-cm-i) (:e-cm-i (o16-dp-kinematics)))
         {:keys [mass-factor-i mass-factor-f e-cm-i e-cm-f]} (o16-dp-kinematics eci)
         z12 (* 1.44 1.0 8.0)
         eta-i (sommerfeld-eta-channel e-cm-i mass-factor-i z12)
         eta-f (sommerfeld-eta-channel e-cm-f mass-factor-f z12)
         base-rows (o16-dp-radial-I-rows-handbook :r-max r-max :h h :L-max L-max :e-cm-i e-cm-i
-                   :chi-normalize-mode chi-normalize-mode)
+                   :chi-normalize-mode chi-normalize-mode :imag-scale imag-scale)
         rows-sig (o16-dp-filter-rows-by-L-alpha
-                  (o16-dp-rows-coulomb-sigma base-rows eta-i eta-f)
+                  (if attach-coulomb-sigma?
+                    (o16-dp-rows-coulomb-sigma base-rows eta-i eta-f)
+                    base-rows)
                   L-alpha-only)]
     (mapv (fn [^double th]
             {:theta-deg th

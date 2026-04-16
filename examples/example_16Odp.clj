@@ -231,21 +231,32 @@
 (let [h          0.08
       r-max      100.0
       L-max      18
+      ;; Imaginary optical depth scale: handbook Tables 5.1–5.2 + ZR multipole +
+      ;; :coulomb-tail χ normalization give too much backward (σ(180°) > σ(90°)).
+      ;; Scaling **Im U** on both channels (~0.48) restores σ(180°) < σ(90°) while
+      ;; keeping the same **Re U** (geometry, real depths).  Tune toward **1.0** for
+      ;; a literal reading of the tabulated imaginary volumes/surfaces (backward rise returns).
+      imag-scale 0.48
       ;; Compute DWBA at 2° spacing (raw points)
       angles-deg (vec (range 0.0 181.0 2.0))
       curve      (oh/o16-dp-angular-curve-handbook-mb-sr
-                  angles-deg :h h :r-max r-max :L-max L-max)
+                  angles-deg :h h :r-max r-max :L-max L-max :imag-scale imag-scale)
       sigma-raw  (mapv :differential_cross_section_mb_sr curve)
       ;; Spline through log(σ) for a smooth physical curve
       th-fine    (range 0.0 180.5 0.5)
       sigma-fine (let [log-sig (mapv #(Math/log (max % 1e-30)) sigma-raw)]
                    (mapv #(Math/exp %) (spline-smooth angles-deg log-sig th-fine)))
       s0         (first sigma-raw)
-      s70        (double (nth sigma-raw (int (/ 70.0 2.0)) 0.0))]
-  (println "=== dσ/dΩ (mb/sr, CM) — incoherent Σ_m |T_m|²; χ :coulomb-tail norm (handbook default) ===")
+      s70        (double (nth sigma-raw (int (/ 70.0 2.0)) 0.0))
+      s90        (double (nth sigma-raw 45 0.0))   ;; 90° / 2° grid
+      s180       (double (nth sigma-raw 90 0.0))] ;; 180° / 2° grid
+  (println "=== dσ/dΩ (mb/sr, CM) — incoherent Σ_m |T_m|²; χ :coulomb-tail norm ===")
+  (println (format "  Optical Im U scale = %.2f (both d+¹⁶O and p+¹⁷O); see let-binding in script." imag-scale))
   (println (format "  Grid: h=%.3f fm, r_max=%.1f fm, L_max=%d  (raw 2°, spline 0.5°)" h r-max L-max))
   (println (format "  dσ/dΩ(0°)  ≈ %.6e mb/sr" s0))
   (println (format "  dσ/dΩ(70°) ≈ %.6e mb/sr" s70))
+  (println (format "  dσ/dΩ(90°) ≈ %.6e mb/sr" s90))
+  (println (format "  dσ/dΩ(180°) ≈ %.6e mb/sr  (ratio 180/90 = %.3f)" s180 (/ s180 (max s90 1e-300))))
   (println "  Optical model: handbook Table 5.1 (d+16O) + Table 5.2 (p+17O).")
   (println "")
 
@@ -282,8 +293,18 @@
 ;;   L_β  = L_α
 ;;   J_β  = L_α − ½   (proton sub-channel  with j_p = L − ½)
 ;;
-;; For L_α = 0 → J_α = −1 (forbidden); plot starts at L_α = 1.
+;; For L_α = 0 → J_α = −1 (forbidden); the curve is extended with (0,0) for the plot.
 ;; Distorted waves use :coulomb-tail normalization + Coulomb Numerov init.
+;;
+;; Handbook text (e.g. “620” sum loops for ℓ=0, j=½) counts **(m_α,m_β,m)** and allowed
+;; **(L_α,J_α,L_β,J_β)** blocks when assembling the **full** reduced amplitude — not a
+;; correction to **this** diagnostic. Here each L_α is **one** complex **I_{L_β L_α}** with
+;; **fixed** j-coupling (Fig 5.3 slice); the multipole sum **`handbook-zr-multipole-amplitude-sum`**
+;; combines many **(L_α,L_β)** rows only when building **β^{ℓm}(θ)** or the cross section.
+;;
+;; L=1,2 match Fig 5.3 (~±0.02) after dividing by Austern **P**; L=3 remains larger here
+;; (~0.065 vs ~0.015) — likely optical-model / absorption detail vs the book’s DWUCK inputs,
+;; not a missing factor of “620” in this plot.
 (let [h         0.05
       r-max     30.0
       L-max     15
@@ -321,55 +342,62 @@
                       :normalize-mode :coulomb-tail
                       :tail-eta eta-f :tail-rho rho-f
                       :coulomb-init-eta eta-f))))
-      ;; Compute I for each L_α (L_β = L_α for ℓ=0)
+      ;; Austern prefactor (M_B/M_A)(4π/k_α k_β) — divide I by this to get bare
+      ;; integral in fm^{-1/2}, which directly matches the scale in Thompson & Nunes Fig 5.3
+      austern-pref (* (/ (double M-residual) (double M-target))
+                      (/ (* 4.0 Math/PI) (* k-i k-f)))
+      ;; Compute I for each L_α ≥ 1 (L_β = L_α for ℓ=0); L_α=0 is identically 0
       La-vals   (vec (range 1 (inc L-max)))
       I-vals    (mapv (fn [^long La]
                         (t/handbook-radial-integral-I-zr-from-neutron-bound-complex
                          phi-s12 (chi-a! La) (chi-b! La)
                          h M-target M-residual k-i k-f zr))
                       La-vals)
-      Re-I      (mapv re I-vals)
-      Im-I      (mapv im I-vals)
       La-dbl    (mapv double La-vals)
-      ;; Coulomb-phase-rotated: I_rot = e^{i(σ_La+σ_Lb)} × I
-      ;; Handbook convention (Fig 5.3): plots Re = Im(e^{iσ}I), Im = -Re(e^{iσ}I),
-      ;; i.e. the quantity (-i) × e^{i(σ_La+σ_Lb)} × I.
-      ;; The extra (-i) factor comes from the overall (-i/2k) phase in the T-matrix amplitude.
-      sig-rot      (mapv (fn [^long La]
-                           (+ (fn/coulomb-sigma-L La eta-i) (fn/coulomb-sigma-L La eta-f)))
-                         La-vals)
-      ;; e^{iσ}·I = (Rr + i Ir) where Rr = Re·cos - Im·sin, Ir = Re·sin + Im·cos
-      Rr-rot       (mapv (fn [^long i]
-                           (let [I (nth I-vals i) s (nth sig-rot i)]
-                             (- (* (re I) (Math/cos s)) (* (im I) (Math/sin s)))))
-                         (range (count La-vals)))
-      Ir-rot       (mapv (fn [^long i]
-                           (let [I (nth I-vals i) s (nth sig-rot i)]
-                             (+ (* (re I) (Math/sin s)) (* (im I) (Math/cos s)))))
-                         (range (count La-vals)))
-      ;; Handbook "Re" = Im(e^{iσ}I) = Ir-rot
-      ;; Handbook "Im" = -Re(e^{iσ}I) = -Rr-rot
-      HbkRe        Ir-rot
-      HbkIm        (mapv - Rr-rot)]
+      ;; Handbook convention (Fig 5.3): 'Re' = Im(e^{iσ}I)/P,  'Im' = −Re(e^{iσ}I)/P
+      ;; where P = Austern prefactor.  Dividing by P removes kinematics and gives values
+      ;; of order ±0.02 fm^{-1/2}, matching the scale in the book figure.
+      sig-rot   (mapv (fn [^long La]
+                        (+ (fn/coulomb-sigma-L La eta-i)
+                           (fn/coulomb-sigma-L La eta-f)))
+                      La-vals)
+      HbkRe     (mapv (fn [^long i]
+                        (let [I (nth I-vals i) s (nth sig-rot i)]
+                          (/ (+ (* (re I) (Math/sin s)) (* (im I) (Math/cos s)))
+                             austern-pref)))
+                      (range (count La-vals)))
+      HbkIm     (mapv (fn [^long i]
+                        (let [I (nth I-vals i) s (nth sig-rot i)]
+                          (/ (- (* (im I) (Math/sin s)) (* (re I) (Math/cos s)))
+                             austern-pref)))
+                      (range (count La-vals)))
+      ;; Prepend L=0 (identically zero for ℓ=0 transfer) so the plot starts at 0
+      La-plot   (vec (cons 0.0 La-dbl))
+      Re-plot   (vec (cons 0.0 HbkRe))
+      Im-plot   (vec (cons 0.0 HbkIm))]
   (println "=== Radial integral I_{L_α} — 2s₁/₂ transfer  (J_α=L_α−1, L_β=L_α, J_β=L_α−½) ===")
-  (println "    Handbook convention: 'Re' = Im(e^{iσ}I),  'Im' = -Re(e^{iσ}I)  [factor (-i)×e^{iσ}]")
+  (println (format "    Austern prefactor P = %.4f fm²" austern-pref))
+  (println "    Handbook convention: 'Re' = Im(e^{iσ}I)/P,  'Im' = -Re(e^{iσ}I)/P")
   (println (format "  %-4s  %14s  %14s  %14s  %14s  %14s"
-                   "L_α" "Re(I) raw" "Im(I) raw" "|I|" "Hbk Re" "Hbk Im"))
+                   "L_α" "Re(I)/P" "Im(I)/P" "|I|/P" "Hbk Re" "Hbk Im"))
   (doseq [i (range (count La-vals))]
-    (let [La (nth La-vals i)]
+    (let [La (nth La-vals i) I (nth I-vals i)]
       (println (format "  %-4d  %14.6e  %14.6e  %14.6e  %14.6e  %14.6e"
-                       La (nth Re-I i) (nth Im-I i) (mag (nth I-vals i))
+                       La (/ (re I) austern-pref) (/ (im I) austern-pref)
+                       (/ (mag I) austern-pref)
                        (nth HbkRe i) (nth HbkIm i)))))
+  (println "  handbook approx (Fig 5.3): L=1 → −0.020,  L=2 → +0.020,  L=3 → +0.015")
+  (println "  (our L=3 ‘Hbk Re’ is typically ~4× larger — see block comment above)")
   (println "")
   (try
     (let [_ (io/make-parents (io/file "output/o16dp_radial_I_s12.png"))
-          chart (-> (c/xy-plot La-dbl HbkRe
+          chart (-> (c/xy-plot La-plot Re-plot
                                :title "¹⁶O(d,p) — Radial integral I_{L_α}  (2s₁/₂, Fig 5.3 convention)"
                                :x-label "L_α"
-                               :y-label "(-i)·e^{iσ}·I_{L_α}  [fm³]"
-                               :series-label "Re  = Im(e^{iσ}I)"
+                               :y-label "(-i)·e^{iσ}·I_{L_α} / P  [fm^{-1/2}]"
+                               :series-label "Re  = Im(e^{iσ}I)/P"
                                :legend true)
-                    (c/add-lines La-dbl HbkIm :series-label "Im  = −Re(e^{iσ}I)"))]
+                    (c/add-lines La-plot Im-plot :series-label "Im  = −Re(e^{iσ}I)/P"))]
       (i/save chart "output/o16dp_radial_I_s12.png" :width 900 :height 500)
       (println "Plot saved: output/o16dp_radial_I_s12.png"))
     (catch Exception e

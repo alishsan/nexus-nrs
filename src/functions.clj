@@ -987,7 +987,7 @@ rho (* k a) ]
   **f̃_C = −η/(2k sin²(θ/2)) · exp(−iη ln sin²(θ/2))** — no Gamma evaluations.
 
   Use together with **`coulomb-phase-diff`** to form **|f_C + f_N|² = |f̃_C + f̃_N|²**, where
-  **f̃_N = Σ_{L=0}^{L_max} (−i/k)(2L+1) P_L · e^{2i(σ_L−σ_0)} · (S^n_L − 1)**
+  **f̃_N = Σ_{L=0}^{L_max} (−i/2k)(2L+1) P_L · e^{2i(σ_L−σ_0)} · (S^n_L − 1)**
   and **e^{2i(σ_L−σ_0)}** = **`coulomb-phase-diff`** (pure product, no Gamma)."
   [^double theta-rad ^double eta ^double k]
   (let [s2    (Math/sin (* 0.5 theta-rad))
@@ -1236,7 +1236,7 @@ rho (* k a) ]
         e2is (c/complex-polar (* 2.0 sig) 1.0)
         S-L-n (s-matrix-for-partial-wave-sum E V L)
         bracket (partial-wave-exp2sigma-Sn-minus-one S-L-n e2is)]
-    (c/mul (c/div (c/complex-cartesian 0 -1) k)
+    (c/mul (c/div (c/complex-cartesian 0 -1) (* 2.0 k))
            (inc (* 2 L))
            (poly/eval-legendre-P L (m/cos theta))
            bracket)))
@@ -1257,7 +1257,7 @@ rho (* k a) ]
 ;; **dσ(mb/sr) = 10 × dσ(fm²/sr)** — not an extra physical factor.
 (defn differential-cross-section
   "Differential cross-section |f|² (**mb/sr**) from partial-wave sum (|f|² in **fm²/sr**, then **×10**).
-  Coulomb elastic: each wave uses **−i/k · (2L+1) P_L · e^{2iσ_L}(S_L^n−1)** (T&N **(3.1.88)**), **S_L^n = `s-matrix`**.
+  Coulomb elastic: each wave uses **−i/(2k) · (2L+1) P_L · e^{2iσ_L}(S_L^n−1)** (T&N **(3.1.88)**), **S_L^n = `s-matrix`**.
 
   Fourth arg is either:
   - a long/int L-max: sum L = 0 … L-max (legacy);
@@ -1279,7 +1279,7 @@ rho (* k a) ]
                 e2is (c/complex-polar (* 2.0 sig) 1.0)
                 S-L-n (s-matrix-for-partial-wave-sum E-cm ws-params L)
                 bracket (partial-wave-exp2sigma-Sn-minus-one S-L-n e2is)
-                f-L (c/mul (c/div (c/complex-cartesian 0 -1) k)
+                f-L (c/mul (c/div (c/complex-cartesian 0 -1) (* 2.0 k))
                            (inc (* 2 L))
                            (poly/eval-legendre-P L (m/cos theta-cm))
                            bracket)]
@@ -1303,7 +1303,7 @@ rho (* k a) ]
 
 (defn elastic-nuclear-amplitude-fn
   "Elastic **f_N(θ)** (**fm**) — Thompson–Nunes **(3.1.88)** nuclear part, sum **L = 0 … L_cut**.
-  Each term is **−i/k · (2L+1) P_L(cos θ) · e^{2iσ_L}(S_L^n − 1)** with **S_L^n = `s-matrix`** (**(3.1.84)**).
+  Each term is **−i/(2k) · (2L+1) P_L(cos θ) · e^{2iσ_L}(S_L^n − 1)** with **S_L^n = `s-matrix`** (**(3.1.84)**).
   When **S_L^n = 1**, **f_N = 0**.
 
   **Numerics:** for charged projectiles on light targets, **S^n** from Coulomb–Hankel matching can grow the sum
@@ -1322,7 +1322,7 @@ rho (* k a) ]
                 e2is (c/complex-polar (* 2.0 sig) 1.0)
                 S-L-n (s-matrix-for-partial-wave-sum E-cm ws-params L)
                 bracket (partial-wave-exp2sigma-Sn-minus-one S-L-n e2is)
-                f-L (c/mul (c/div (c/complex-cartesian 0 -1) k)
+                f-L (c/mul (c/div (c/complex-cartesian 0 -1) (* 2.0 k))
                            (inc (* 2 L))
                            (poly/eval-legendre-P L (m/cos theta-cm))
                            bracket)]

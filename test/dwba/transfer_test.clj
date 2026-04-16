@@ -3,6 +3,7 @@
   (:require [clojure.test :refer :all]
             [dwba.transfer :as t]
             [dwba.angular-momentum :as jam]
+            [dwba.benchmark.o16-dp-handbook :as oh]
             [functions :as fn :refer :all]
             [fastmath.core :as m]
             [complex :as c :refer [re im mag complex-cartesian add mul complex-polar]]))
@@ -1176,3 +1177,96 @@
         pub (t/transfer-orbital-cg-bilinear-sum-mi li L Lp lf)]
     (is (< (Math/abs (- pub s0)) 1e-9) "public helper matches M=0 sum")
     (is (< (Math/abs (- s0 s2)) 1e-9) "M=0 vs M=2")))
+
+;; ============================================================================
+;; 16O(d,p) COMPLEX RADIAL INTEGRAL DIAGNOSTICS
+;; ============================================================================
+
+(deftest o16dp-complex-radial-integrals-are-complex-test
+  "Verify that the complex ZR radial integrals for ¹⁶O(d,p)¹⁷O have a significant
+  imaginary part (> 5% of |I|) for the dominant (La,Lb) pairs when absorption is
+  present (Im OMP ≠ 0).  A purely real result would indicate the imaginary parts
+  of χ_α / χ_β are being silently dropped."
+  (let [h    0.10
+        r-max 60.0
+        L-max 4
+        rows  (oh/o16-dp-radial-I-rows-handbook :h h :r-max r-max :L-max L-max
+                                                 :chi-normalize-mode :coulomb-tail)]
+    (testing "Rows are returned"
+      (is (seq rows) "Should produce at least one (La,Lb) row"))
+    (testing "I values are complex (not java.lang.Double)"
+      (doseq [row rows]
+        (is (c/complex? (:I row))
+            (format "I for La=%d Lb=%d should be a Complex, got %s"
+                    (:L-alpha row) (:L-beta row) (type (:I row))))))
+    (testing "At least one I has |Im(I)/|I|| > 5%"
+      (let [frac-im (fn [row]
+                      (let [Iv (:I row)
+                             absI (mag Iv)]
+                        (if (< absI 1e-40) 0.0 (/ (Math/abs (im Iv)) absI))))]
+        (is (some #(> (frac-im %) 0.05) rows)
+            "At least one (La,Lb) row should have |Im(I)|/|I| > 5%; got all real — absorption is not propagating through the integrand")
+        (println "\n  [diagnostic] Im(I)/|I| per (La,Lb):")
+        (doseq [row (sort-by :L-alpha rows)]
+          (let [Iv   (:I row)
+                absI (mag Iv)]
+            (println (format "    La=%d Lb=%d  Re=% .4e  Im=% .4e  |I|=%.4e  Im/|I|=%.3f"
+                             (:L-alpha row) (:L-beta row)
+                             (re Iv) (im Iv) absI
+                             (if (< absI 1e-40) 0.0 (/ (im Iv) absI))))))))))
+
+(defn- o16dp-beta-breakdown
+  "Helper: compute β_0 at θ=0° and 180°, print individual term contributions."
+  [rows-sig label]
+  (let [ell 2
+        m   0
+        b0    (t/handbook-zr-multipole-amplitude-sum ell m 0.0      rows-sig)
+        b180  (t/handbook-zr-multipole-amplitude-sum ell m Math/PI  rows-sig)]
+    (println (format "  [%s] β(0°)  Re=% .4e Im=% .4e |β|=%.4e" label (re b0) (im b0) (mag b0)))
+    (println (format "  [%s] β(180°)Re=% .4e Im=% .4e |β|=%.4e" label (re b180) (im b180) (mag b180)))
+    (println (format "  [%s] |β(0°)|/|β(180°)| = %.4f" label (if (< (mag b180) 1e-20) 1e6 (/ (mag b0) (mag b180)))))
+    {:b0 b0 :b180 b180}))
+
+(deftest o16dp-amplitude-forward-peaked-test
+  "The ¹⁶O(d,p)¹⁷O ℓ=2 DWBA amplitude |β_{m=0}| must satisfy |β(0°)| ≥ |β(180°)|
+  and the differential cross section at 0° must exceed 180°.  A failure means the
+  even-La / odd-La interference is backwards — a symptom of wrong phase convention,
+  dropped Im(u) in the radial integral, or incorrect Coulomb-sigma sign."
+  (let [h     0.10
+        r-max 60.0
+        L-max 6
+        {:keys [e-cm-i e-cm-f mass-factor-i mass-factor-f k-i k-f]} (oh/o16-dp-kinematics)
+        z12   (* 1.44 1.0 8.0)
+        eta-i (binding [fn/mass-factor mass-factor-i fn/Z1Z2ee z12]
+                (fn/channel-sommerfeld-eta e-cm-i))
+        eta-f (binding [fn/mass-factor mass-factor-f fn/Z1Z2ee z12]
+                (fn/channel-sommerfeld-eta e-cm-f))
+        ;; --- coulomb-tail rows ---
+        base-ct  (oh/o16-dp-radial-I-rows-handbook :h h :r-max r-max :L-max L-max
+                                                    :chi-normalize-mode :coulomb-tail)
+        rows-ct  (t/handbook-zr-rows-with-coulomb-sigma base-ct eta-i eta-f)
+        ;; --- raw normalization (no L-dependent rescale) ---
+        base-raw (oh/o16-dp-radial-I-rows-handbook :h h :r-max r-max :L-max L-max
+                                                    :chi-normalize-mode :raw)
+        rows-raw (t/handbook-zr-rows-with-coulomb-sigma base-raw eta-i eta-f)]
+    (println "\n=== o16dp amplitude forward-peaked test ===")
+    (println (format "  η_i=%.4f  η_f=%.4f" eta-i eta-f))
+    (println "\n  -- Per-row (La,Lb) diagnostics for coulomb-tail --")
+    (doseq [row (sort-by :L-alpha rows-ct)]
+      (let [Iv (:I row) sa (:sigma-alpha row) sb (:sigma-beta row)]
+        (println (format "    La=%d Lb=%d  σα=%.3f σβ=%.3f  Re(I)=% .4e Im(I)=% .4e"
+                         (:L-alpha row) (:L-beta row) sa sb (re Iv) (im Iv)))))
+    (println "\n  -- coulomb-tail --")
+    (let [{:keys [b0 b180]} (o16dp-beta-breakdown rows-ct "ct")]
+      (testing "ct: |β(0°)| ≥ |β(180°)|"
+        (is (>= (mag b0) (mag b180))
+            (format "[coulomb-tail] |β(0°)|=%.4e < |β(180°)|=%.4e" (mag b0) (mag b180)))))
+    (println "\n  -- raw normalization (diagnostic only, not asserted) --")
+    (o16dp-beta-breakdown rows-raw "raw")
+    (let [sigma0   (oh/o16-dp-dsigma-handbook-mb-sr 0.0   :h h :r-max r-max :L-max L-max)
+          sigma180 (oh/o16-dp-dsigma-handbook-mb-sr 180.0 :h h :r-max r-max :L-max L-max)]
+      (println (format "\n  [diagnostic] dσ/dΩ: 0°=%.4e  180°=%.4e  ratio=%.3f  (mb/sr)"
+                       sigma0 sigma180 (if (< sigma180 1e-20) 1e6 (/ sigma0 sigma180))))
+      (testing "dσ/dΩ at 0° exceeds dσ/dΩ at 180°"
+        (is (> sigma0 sigma180)
+            (format "σ(0°)=%.4e ≤ σ(180°)=%.4e" sigma0 sigma180))))))

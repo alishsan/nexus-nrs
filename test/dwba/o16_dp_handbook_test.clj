@@ -20,3 +20,10 @@
     (is (= 2 (count curve)))
     (is (every? #(Double/isFinite (:differential_cross_section_mb_sr %)) curve))))
 
+(deftest o16-dp-handbook-bind-flux-dsigma-finite-test
+  "BIND-style **χ** normalization (`:bind-flux`) runs end-to-end — root-cause path vs `:coulomb-tail`."
+  (let [s (oh/o16-dp-dsigma-handbook-mb-sr 35.0 :h 0.1 :r-max 16.0 :L-max 4
+             :chi-normalize-mode :bind-flux)]
+    (is (Double/isFinite (double s)))
+    (is (pos? (double s)))))
+
