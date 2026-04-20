@@ -5,6 +5,12 @@
 ;; and **`transfer-differential-cross-section`** — parallel to **`ca40-pd-handbook`** (pickup) with
 ;; **α = d+¹⁶O**, **β = p+¹⁷O**.
 ;;
+;; **dσ/dΩ(θ)** — primary curve is the **full** unpolarized **Σ_m |T_m|²** (handbook / Austern **(5.6)** angular
+;; content via **`handbook-zr-multipole-amplitude-sum`**, default **`coherent-m-beta? false`**). Additional series on
+;; the angular plots are **diagnostics only**: coherent **Σ_{L_β} T_{L_β} Y_{L_β 0}** with **T_{L_β} = D₀√(2ℓ+1) Σ_{L_α} I**
+;; (**`transfer-differential-cross-section-angular-coherent`**, no **l_i/l_f** weights — same reduced multipole
+;; picture as **`example_O16_alpha_inelastic_2plus.clj`**), and a single dominant **(L_α,L_β)** row.
+;;
 ;; Reaction: 16O(d,p)17O (g.s. model: d₅/₂ → **ℓ=2** bound well)
 ;;
 ;; Load: `(load-file "examples/example_16Odp.clj")` from project root.
@@ -17,7 +23,7 @@
   (:require [dwba.benchmark.o16-dp-handbook :as oh]
             [dwba.transfer :as t]
             [functions :as fn]
-            [complex :refer [re im mag mul subt2 add2 complex-cartesian complex-polar]]
+            [complex :refer [re im mag mul add subt2 add2 complex-cartesian complex-polar]]
             [fastmath.polynomials :as poly]
             [fastmath.core :as m]
             [incanter.core :as i]
@@ -237,22 +243,75 @@
       ;; keeping the same **Re U** (geometry, real depths).  Tune toward **1.0** for
       ;; a literal reading of the tabulated imaginary volumes/surfaces (backward rise returns).
       imag-scale 0.48
-      ;; Compute DWBA at 2° spacing (raw points)
+      ;; Compute DWBA at 2° spacing (raw points); build radial rows once for handbook + diagnostics.
       angles-deg (vec (range 0.0 181.0 2.0))
-      curve      (oh/o16-dp-angular-curve-handbook-mb-sr
-                  angles-deg :h h :r-max r-max :L-max L-max :imag-scale imag-scale)
-      sigma-raw  (mapv :differential_cross_section_mb_sr curve)
-      ;; Spline through log(σ) for a smooth physical curve
-      th-fine    (range 0.0 180.5 0.5)
+      eci        (:e-cm-i (oh/o16-dp-kinematics))
+      {:keys [mass-factor-i mass-factor-f e-cm-i e-cm-f k-i k-f]}
+      (oh/o16-dp-kinematics eci)
+      z12        (* 1.44 1.0 8.0)
+      eta-i      (binding [fn/mass-factor mass-factor-i fn/Z1Z2ee z12]
+                   (fn/channel-sommerfeld-eta e-cm-i))
+      eta-f      (binding [fn/mass-factor mass-factor-f fn/Z1Z2ee z12]
+                   (fn/channel-sommerfeld-eta e-cm-f))
+      base-rows  (oh/o16-dp-radial-I-rows-handbook :r-max r-max :h h :L-max L-max :e-cm-i e-cm-i
+                    :chi-normalize-mode :coulomb-tail :imag-scale imag-scale)
+      rows-sig   (t/handbook-zr-rows-with-coulomb-sigma base-rows eta-i eta-f)
+      sigma-raw  (mapv (fn [^double th]
+                         (oh/o16-dp-dsigma-handbook-mb-sr th
+                           :radial-rows-sigma rows-sig :e-cm-i eci
+                           :coherent-m-beta? false :S-factor 1.0))
+                       angles-deg)
+      ;; ZR strength × √(2ℓ+1) on each **I** block (ℓ = 2 for 0d₅/₂); same prefactor as **T_m** in handbook sum.
+      D0         (t/zero-range-constant :d-p)
+      ell        2
+      pref-zr    (complex-cartesian (* D0 (Math/sqrt (inc (* 2 ell)))) 0.0)
+      I-sum-by-Lb (->> rows-sig
+                       (group-by :L-beta)
+                       (map (fn [[lb rs]] [lb (reduce add (map :I rs))]))
+                       (into {}))
+      T-map-reduced (into {} (map (fn [[lb ic]] [lb (mul pref-zr ic)]) I-sum-by-Lb))
+      best-row   (apply max-key (fn [r] (mag (:I r))) rows-sig)
+      ;; **Partial reduced:** coherent **Y_{L_β0}** sum using only the **top two** exit columns by
+      ;; **|Σ_{L_α} I|**. A **single** **L_β** gives **|T Y_{L0}|²** with deep zeros from **Y_{L0}** alone;
+      ;; the full reduced curve has **L_β–L_β′** interference, so one column often looks “wrong” even when
+      ;; the amplitude is consistent. Two columns keep the main interference structure for many reactions.
+      top2-Lb    (take 2 (sort-by (fn [[_lb ic]] (- (mag ic))) (seq I-sum-by-Lb)))
+      T-map-dom  (into {}
+                       (map (fn [[lb ic]] [lb (mul pref-zr ic)])
+                            top2-Lb))
+      spin       (* (t/transfer-nuclear-spin-statistical-factor 0.0 2.5)
+                    (t/transfer-unpolarized-deuteron-spin-factor))
+      theta-rads (mapv (fn [^double d] (* d (/ Math/PI 180.0))) angles-deg)
+      sigma-red-raw
+      (mapv (fn [^double th]
+              (* spin (double (t/transfer-differential-cross-section-angular-coherent
+                               T-map-reduced 1.0 k-i k-f th mass-factor-i mass-factor-f))))
+            theta-rads)
+      sigma-dom-raw
+      (mapv (fn [^double th]
+              (* spin (double (t/transfer-differential-cross-section-angular-coherent
+                               T-map-dom 1.0 k-i k-f th mass-factor-i mass-factor-f))))
+            theta-rads)
+      ;; Spline through log(σ) for smooth curves (primary + diagnostics)
+      th-fine    (vec (range 0.0 180.5 0.5))
       sigma-fine (let [log-sig (mapv #(Math/log (max % 1e-30)) sigma-raw)]
                    (mapv #(Math/exp %) (spline-smooth angles-deg log-sig th-fine)))
+      sigma-red-fine
+      (mapv #(Math/exp %)
+            (spline-smooth angles-deg (mapv #(Math/log (max % 1e-30)) sigma-red-raw) th-fine))
+      sigma-dom-fine
+      (mapv #(Math/exp %)
+            (spline-smooth angles-deg (mapv #(Math/log (max % 1e-30)) sigma-dom-raw) th-fine))
       s0         (first sigma-raw)
       s70        (double (nth sigma-raw (int (/ 70.0 2.0)) 0.0))
       s90        (double (nth sigma-raw 45 0.0))   ;; 90° / 2° grid
       s180       (double (nth sigma-raw 90 0.0))] ;; 180° / 2° grid
-  (println "=== dσ/dΩ (mb/sr, CM) — incoherent Σ_m |T_m|²; χ :coulomb-tail norm ===")
+  (println "=== dσ/dΩ (mb/sr, CM) — full Σ_m |T_m|² (handbook); reduced Y_{L_β0} diagnostic ===")
   (println (format "  Optical Im U scale = %.2f (both d+¹⁶O and p+¹⁷O); see let-binding in script." imag-scale))
   (println (format "  Grid: h=%.3f fm, r_max=%.1f fm, L_max=%d  (raw 2°, spline 0.5°)" h r-max L-max))
+  (println (format "  Peak |I| cell: (L_α,L_β) = (%d,%d); partial reduced = top-2 L_β by |Σ_{L_α} I|: %s"
+                   (:L-alpha best-row) (:L-beta best-row)
+                   (clojure.string/join ", " (map str (map first top2-Lb)))))
   (println (format "  dσ/dΩ(0°)  ≈ %.6e mb/sr" s0))
   (println (format "  dσ/dΩ(70°) ≈ %.6e mb/sr" s70))
   (println (format "  dσ/dΩ(90°) ≈ %.6e mb/sr" s90))
@@ -262,20 +321,32 @@
 
   (try
     (let [_ (io/make-parents (io/file "output/16Odp_dcs.png"))
-          chart (c/xy-plot (vec th-fine) sigma-fine
-                           :title "¹⁶O(d,p)¹⁷O — Handbook ZR (spline)"
-                           :x-label "θ_CM (deg)"
-                           :y-label "dσ/dΩ (mb/sr)"
-                           :series-label "o16-dp (spline)"
-                           :legend true)]
+          chart (-> (c/xy-plot th-fine sigma-fine
+                                 :title "¹⁶O(d,p)¹⁷O — Handbook ZR: full (5.6) m-sum vs reduced Y_{L_β0}"
+                                 :x-label "θ_CM (deg)"
+                                 :y-label "dσ/dΩ (mb/sr)"
+                                 :series-label "full Σ_m |T_m|² (spline)"
+                                 :legend true)
+                      (c/add-lines th-fine sigma-red-fine
+                                   :series-label "reduced Σ_{L_β} T_{L_β} Y_{L_β0} (spline)")
+                      (c/add-lines th-fine sigma-dom-fine
+                                   :series-label (format "top-2 L_β {%s} coherent (peak |I| %d,%d) (spline)"
+                                                         (clojure.string/join "," (map str (map first top2-Lb)))
+                                                         (:L-alpha best-row) (:L-beta best-row))))]
       (i/save chart "output/16Odp_dcs.png" :width 800 :height 500)
       (println "Plot saved: output/16Odp_dcs.png")
-      (let [chart-log (-> (c/xy-plot (vec th-fine) (series-for-log sigma-fine)
-                                     :title "¹⁶O(d,p)¹⁷O — Handbook ZR (log y, spline)"
-                                     :x-label "θ_CM (deg)"
-                                     :y-label "dσ/dΩ (mb/sr), log₁₀"
-                                     :series-label "o16-dp (spline)"
-                                     :legend true)
+      (let [chart-log (-> (-> (c/xy-plot th-fine (series-for-log sigma-fine)
+                                         :title "¹⁶O(d,p)¹⁷O — Handbook ZR (log y)"
+                                         :x-label "θ_CM (deg)"
+                                         :y-label "dσ/dΩ (mb/sr), log₁₀"
+                                         :series-label "full Σ_m |T_m|²"
+                                         :legend true)
+                             (c/add-lines th-fine (series-for-log sigma-red-fine)
+                                          :series-label "reduced Y_{L_β0}")
+                             (c/add-lines th-fine (series-for-log sigma-dom-fine)
+                                          :series-label (format "top-2 L_β {%s} (|I| max %d,%d)"
+                                                                (clojure.string/join "," (map str (map first top2-Lb)))
+                                                                (:L-alpha best-row) (:L-beta best-row))))
                          (chart-set-log-range-y! "dσ/dΩ (mb/sr)"))]
         (i/save chart-log "output/16Odp_dcs_log.png" :width 800 :height 500)
         (println "Plot saved: output/16Odp_dcs_log.png (log y-axis)")))

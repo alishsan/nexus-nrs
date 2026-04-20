@@ -1032,7 +1032,18 @@ rho (* k a) ]
 
 (def ^:dynamic *elastic-imag-ws-params*
   "When bound to [W0 R_W a_W] (W0 > 0), elastic s-matrix uses V(r)=V_C+V_real WS - i W0 f_W(r).
-   Nil = real potential only (default).")
+   Nil = real potential only (default)."
+  nil)
+
+(def ^:dynamic *elastic-match-radius-fm*
+  "When set to positive **a** (fm), elastic **`s-matrix`** matches Coulomb **Hankel±** at **r = a**
+   instead of **2(R_C + a₀)** from **V**. Default nil → **2(R_C + a₀)**."
+  nil)
+
+(def ^:dynamic *r-matrix-numerov-dr-fm*
+  "Positive radial step **dr** (fm) for **`r-matrix-complex-imag-ws`** and Coulomb **`r-matrix`**
+   in **`s-matrix`**. Default nil → **0.001** fm."
+  nil)
 
 (defn r-matrix-complex-imag-ws
   "Complex **R = u/(a u′)** at radius **a** with **V = V_C + V_WS,re − i W₀ f_W(r)**.
@@ -1040,8 +1051,11 @@ rho (* k a) ]
   Older explicit stepping on **u″ = f(r) u** spoiled **u** at large **L** for typical **dr** (**NaN `s-matrix`**
   beyond **L ≈ 45**), so elastic codes silently dropped high partial waves and **dσ/dΩ** plots looked **jagged**.
   This uses complex **Numerov** (**`numerov-step-complex`**) on a grid whose last **u** step lands at **a**,
-  with **`numerov-append-and-renormalize`** so **|**u**|** does not under/overflow along **r** (**R** invariant)."
-  [E V a L w-vec]
+  with **`numerov-append-and-renormalize`** so **|**u**|** does not under/overflow along **r** (**R** invariant).
+
+  Optional **`dr-ref`** (fm): step size; default **0.001**. Use **0.1** with large **a** (e.g. **300** fm) for experiments."
+  ([E V a L w-vec] (r-matrix-complex-imag-ws E V a L w-vec 0.001))
+  ([E V a L w-vec dr-ref]
   (let [E (double E)
         a (double a)
         L (long L)
@@ -1050,7 +1064,9 @@ rho (* k a) ]
         RW (double RW)
         aW (double aW)
         R0 (second V)
-        dr-ref 0.001
+        dr-ref (double dr-ref)
+        _ (when (not (pos? dr-ref))
+            (throw (ex-info "r-matrix-complex-imag-ws: dr-ref must be positive" {:dr-ref dr-ref})))
         n-intervals (max 2 (long (Math/ceil (/ a dr-ref))))
         h (/ a (double n-intervals))
         imag-at (fn [^double r]
@@ -1099,7 +1115,7 @@ rho (* k a) ]
                    (c/mul (c/complex-cartesian a 0.0)
                           (c/add dudr (c/complex-cartesian 1e-22 0.0)))
                    denom)]
-    (c/div u-at-a denom')))
+    (c/div u-at-a denom'))))
 
 (defn r-matrix ([^double E V ^long L ]  ;with coulomb ;construct R-matrix * a depending on 1D Coulomb + Woods-Saxon potential V(R) = -V0/(1+exp ((r-R0)/a0)) V = [V0, R0, a0]
                                         ;choose u(0) = 0, u'(0) = 1 for initial conditions
@@ -1116,12 +1132,15 @@ rho (* k a) ]
 
 
                     )))
-([^double E V a ^long L ]  ;construct R-matrix * a depending on 1D Coulomb + Woods-Saxon potential V(R) = -V0/(1+exp ((r-R0)/a0)) V = [V0, R0, a0]
+([^double E V a ^long L ] (r-matrix E V a L 0.001))
+([E V a L dr]  ;construct R-matrix * a depending on 1D Coulomb + Woods-Saxon potential V(R) = -V0/(1+exp ((r-R0)/a0)) V = [V0, R0, a0]
                                         ;choose u(0) = 0, u'(0) = 1 for initial conditions
                 (let [
                       R0 (second V)
                       a0 (last V)
-                      dr 0.001]
+                      dr (double dr)]
+                  (when (not (pos? dr))
+                    (throw (ex-info "r-matrix [E V a L dr]: dr must be positive" {:dr dr})))
                   (loop [x dr pot 0 d2udr2 (/ 1. dr) dudr 1 ur dr]
                     (if (> x a)
                       (/ ur dudr a); R = ur/ (a dudr) 
@@ -1147,23 +1166,30 @@ rho (* k a) ]
       (and (Double/isFinite r) (Double/isFinite im)))
     (catch Exception _ false)))
 
-(defn s-matrix-3-impl [^double E V ^long L]
+(defn- s-matrix-3-impl [E V L match-a radial-dr]
   (let [V-vec (vec V)
         V0 (double (first V-vec))
         Rc (double (second V-vec))
         k (m/sqrt (* mass-factor E))
         wv *elastic-imag-ws-params*
         imag-on? (and (sequential? wv) (pos? (double (first wv))))
+        a (double match-a)
+        radial-dr (double radial-dr)
         ;; Same matching ratio as **`s-matrix0`**: **(Ō⁻ − ρ R ∂Ō⁻) / (Ō⁺ − ρ R ∂Ō⁺)** with **Ō = Hankel±** and **η = Z₁Z₂e²·mass/(2k)**.
         ;; **No σ** in **`s-matrix`** — **σ** enters only **`partial-wave-exp2sigma-Sn-minus-one`** for **f_N**.
-        ;; Pure point Coulomb (**V₀ = R_C = 0**, no imag WS): **S^n = 1** (no short-range scattering).
+        ;;
+        ;; **`pure-point-coulomb?`** is a **misleading** name: it does **not** mean “point Coulomb charge, but
+        ;; nuclear physics can still be on elsewhere.” In this code the **entrance** optical channel is **only**
+        ;; **`V = [V₀ R_C a]`** (real WS + **`Coulomb-pot r R_C`**) plus optional imag WS. So this flag really means:
+        ;; **V₀ = 0** (no real Woods–Saxon well), **R_C = 0** (point **Z₁Z₂e²/r** in **`Coulomb-pot`**), and **no**
+        ;; imaginary WS ⇒ there is **no** short-range optical potential to generate **S_L^n ≠ 1**; we short-circuit
+        ;; to **S^n ≡ 1** (pure Coulomb pole, no nuclear/optical scattering in **V**).
         pure-point-coulomb? (and (zero? V0) (zero? Rc) (not imag-on?))]
     (if pure-point-coulomb?
       (c/complex-cartesian 1.0 0.0)
-      (let [a (* 2 (+ Rc (double (last V-vec))))
-            R (if imag-on?
-                (r-matrix-complex-imag-ws E V-vec a L wv)
-                (c/complex-cartesian (r-matrix E V-vec a L) 0.0))
+      (let [R (if imag-on?
+                (r-matrix-complex-imag-ws E V-vec a L wv radial-dr)
+                (c/complex-cartesian (r-matrix E V-vec a L radial-dr) 0.0))
             eta (* Z1Z2ee (/ mass-factor k 2))
             rho (* k a)
             rho-c (c/complex-cartesian rho 0.0)
@@ -1171,13 +1197,13 @@ rho (* k a) ]
         (c/div (c/subt2 (Hankel- L eta rho) (c/mul rho-c R (deriv Hankel- L eta rho d-rho)))
                (c/subt2 (Hankel+ L eta rho) (c/mul rho-c R (deriv Hankel+ L eta rho d-rho))))))))
 
-;; Cache must include mass-factor, Z1Z2ee, and optional imaginary WS: all affect R and matching.
+;; Cache must include mass-factor, Z1Z2ee, optional imaginary WS, match radius **a**, and **dr**: all affect **S**.
 (def ^:private s-matrix-3-memo
-  (memoize (fn [[E V L mf z12 wkey]]
+  (memoize (fn [[E V L mf z12 wkey ma dr]]
              (binding [mass-factor (double mf)
                        Z1Z2ee (double z12)
                        *elastic-imag-ws-params* wkey]
-               (s-matrix-3-impl E V L)))))
+               (s-matrix-3-impl E V L (double ma) (double dr))))))
 
 (defn s-matrix
   "**S_L^n** — R-matrix match to Coulomb **Hankel±**, **same quotient as `s-matrix0`** with **hankel0± → Hankel±** and **η = Z₁Z₂e²·mass/(2k)**.
@@ -1186,12 +1212,28 @@ rho (* k a) ]
 
   **Pure point Coulomb** (**V₀ = R_C = 0**, no imag WS): **1 + 0i**.
 
-  Two arities: memoized **[E V L]** vs explicit **a** in **[E V a L]**."
-  ([^double E V ^long L]
-                (s-matrix-3-memo [E (vec V) L mass-factor Z1Z2ee *elastic-imag-ws-params*]))
+  Two arities: memoized **[E V L]** (optional **`*elastic-match-radius-fm*`**, **`*r-matrix-numerov-dr-fm*`**) vs explicit **a** in **[E V a L]**."
+  ([E V L]
+                (let [E (double E)
+                      L (long L)
+                      V-vec (vec V)
+                      match-a (if *elastic-match-radius-fm*
+                                (double *elastic-match-radius-fm*)
+                                (* 2 (+ (double (second V-vec)) (double (last V-vec)))))
+                      radial-dr (let [d *r-matrix-numerov-dr-fm*]
+                                  (if (and d (pos? (double d)))
+                                    (double d)
+                                    0.001))]
+                  (when (not (pos? match-a))
+                    (throw (ex-info "s-matrix: *elastic-match-radius-fm* must be positive when set"
+                                    {:match-a match-a})))
+                  (s-matrix-3-memo [E V-vec L mass-factor Z1Z2ee *elastic-imag-ws-params* match-a radial-dr])))
 
-  ([^double E V ^double a ^long L]
-                (let [k (m/sqrt (*  mass-factor E))
+  ([E V a L]
+                (let [E (double E)
+                      a (double a)
+                      L (long L)
+                      k (m/sqrt (*  mass-factor E))
                       R (/ (r-matrix-a E V a L) a)
                       eta (* Z1Z2ee mass-factor (/ 1. k 2))
                       rho (* k a)

@@ -347,14 +347,16 @@
    :R_W (parse-double-default (:transfer_RW params) (parse-double-default (:R_W params) 2.0))
    :a_W (parse-double-default (:transfer_aW params) (parse-double-default (:a_W params) 0.6))})
 
-(def ^:private default-energies [5.0 10.0 15.0 20.0 25.0])
+;; Default lab energies (MeV): **α + ¹⁴⁸Sm** example (**E_lab = 50**); shared by elastic / phase-shift forms.
+(def ^:private default-energies [50.0])
 (def ^:private default-L-values [0 1 2 3 4 5])
 
 ;; Elastic dσ/dΩ API: **`differential-cross-section-nuclear-cut`** = **10 |f_C + f_N|²** mb/sr — **not**
 ;; **`differential-cross-section`** (**|f_N|²** only), which made **dσ/σ_Rutherford** meaningless (~10⁴ spikes).
 ;; Partial waves **L = 0 … requested `elastic_dsigma_L_max`** (clamped); the main-page **L_values** field is
 ;; still only for phase shift / inelastic / transfer.
-(def ^:private elastic-dsigma-L-max-default 22)
+;; Partial-wave cutoff for **10|f_C+f_N|²** — aligned with **`examples/example_alpha_Sm148_elastic.clj`**.
+(def ^:private elastic-dsigma-L-max-default 41)
 (def ^:private elastic-dsigma-L-max-hardcap 45)
 (def ^:private elastic-dsigma-L-min 8)
 
@@ -428,8 +430,8 @@
           ws-w (ws-w-params-from p)
           radius (parse-double-default (:radius p) 3.0)
           angles (or (seq (parse-doubles (:angles p))) (range 0.0 181.0 10.0))
-          elastic-projectile (or (:elastic_projectile p) (:projectile p) "p")
-          elastic-target (or (:elastic_target p) (:inelastic_target p) (:target p) "16O")
+          elastic-projectile (or (:elastic_projectile p) (:projectile p) "a")
+          elastic-target (or (:elastic_target p) (:inelastic_target p) (:target p) "148Sm")
           elastic-target-A (when (= (str elastic-target) "generic")
                             (let [v (parse-int-default (:elastic_target_A p) 16)] (when (and (number? v) (>= v 1) (<= v 300)) v)))
           elastic-target-Z (when (= (str elastic-target) "generic")
@@ -437,6 +439,7 @@
           [target-A target-Z] (case (str elastic-target)
                                 "12C" [12 6]
                                 "16O" [16 8]
+                                "148Sm" [148 62]
                                 [(or elastic-target-A 16) (or elastic-target-Z 8)])
           [proj-mass proj-Z] (case (str elastic-projectile)
                                "n" [939.565 0]
@@ -471,7 +474,7 @@
                                               :L_values L-values
                                               :elastic_dsigma_L_values elastic-dsigma-L-values
                                               :elastic_dsigma_model "differential-cross-section-nuclear-cut"
-                                              :elastic_dsigma_L_note "Elastic dσ/dΩ = 10|f_C+f_N|² (T&N); f_N sums L = 0 … elastic_dsigma_L_max. Point Coulomb ratio sanity: V0=R0=0 (a0>0 for matching radius) gives dσ/σ_Ruth = 1. For p + light targets with the default real WS, large-L Hankel matching can inflate f_N (try LMax=22 default; raise only with care—in particular forward angles often need more partial waves for a fully converged nuclear term)."
+                                              :elastic_dsigma_L_note "Elastic dσ/dΩ = 10|f_C+f_N|² (T&N); f_N sums L = 0 … elastic_dsigma_L_max. Imaginary volume WS (W0,R_W,a_W) is passed via *elastic-imag-ws-params* when W0>0 (complex Numerov). Point Coulomb ratio sanity: V0=R0=0 (a0>0) gives dσ/σ_Ruth = 1. Default preset: α+¹⁴⁸Sm, L_max=41; for p+light targets, large L_max can inflate f_N—raise only with care."
                                               :elastic_dsigma_L_max elastic-dsigma-L-max
                                               :ws_params ws
                                               :radius radius
@@ -557,6 +560,8 @@
           [energies L-values] (ensure-energies-L (parse-doubles (:energies p)) (parse-ints (:L_values p)))
           lambdas (parse-lambdas p)
           ws (ws-params-from p)
+          ;; Same volume imaginary WS as **Elastic** (`ws-w-params-from`); passed to **`optical-potential-woods-saxon`** via **`:W-params`**.
+          ws-w (ws-w-params-from p)
           projectile-str (str (or (:projectile p) "p"))
           target-str (str (or (:inelastic_target p) "12C"))
           projectile-type (case projectile-str
@@ -594,14 +599,15 @@
           entrance-wave (fn [E-i L-i]
                           (cond
                             (and ws charged-inelastic?)
-                            (inel E-i L-i ws h r-max
-                                  :projectile-type projectile-type
-                                  :target-A target-A
-                                  :target-Z target-Z
-                                  :E-lab E-i
-                                  :s spin
-                                  :j (+ L-i spin)
-                                  :mass-factor mass-factor)
+                            (apply inel E-i L-i ws h r-max
+                                   (concat [:projectile-type projectile-type
+                                            :target-A target-A
+                                            :target-Z target-Z
+                                            :E-lab E-i
+                                            :s spin
+                                            :j (+ L-i spin)
+                                            :mass-factor mass-factor]
+                                           (when ws-w [:W-params ws-w])))
                             ws
                             (inel E-i L-i ws h r-max)
                             :else
@@ -617,14 +623,15 @@
                       (let [E-lab-ex (max 0.001 (- E-i E-ex))]
                         (cond
                           (and ws charged-inelastic?)
-                          (inel-exit E-i E-ex L-i ws h r-max
-                                     :outgoing-type projectile-type
-                                     :residual-A target-A
-                                     :residual-Z target-Z
-                                     :E-lab E-lab-ex
-                                     :s spin
-                                     :j (+ L-i spin)
-                                     :mass-factor mass-factor)
+                          (apply inel-exit E-i E-ex L-i ws h r-max
+                                 (concat [:outgoing-type projectile-type
+                                          :residual-A target-A
+                                          :residual-Z target-Z
+                                          :E-lab E-lab-ex
+                                          :s spin
+                                          :j (+ L-i spin)
+                                          :mass-factor mass-factor]
+                                         (when ws-w [:W-params ws-w])))
                           ws
                           (inel-exit E-i E-ex L-i ws h r-max)
                           :else
@@ -661,8 +668,11 @@
                                                                                   lambda mu beta ws E-i E-ex r-max h mass-factor))))]
                                    {:energy E-i :lambda lambda :excitation_energy E-ex :differential_cross_section (double dsigma-mb-sr)})
                                  (catch Exception e {:energy E-i :lambda lambda :excitation_energy E-ex :differential_cross_section 0.0 :error (.getMessage e)})))]
-          (response {:success true :data {:inelastic inelastic-data :parameters {:energies energies :L_values L-values :lambdas lambdas :ws_params ws :E_ex E-ex :beta beta :h h :r_max r-max
-                                                                                  :projectile projectile-str :inelastic_target target-str}}})))
+          (response {:success true :data {:inelastic inelastic-data
+                                          :parameters (merge {:energies energies :L_values L-values :lambdas lambdas :ws_params ws
+                                                              :E_ex E-ex :beta beta :h h :r_max r-max
+                                                              :projectile projectile-str :inelastic_target target-str}
+                                                             (when ws-w {:ws_w_params ws-w :inelastic_complex_optical true}))}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
 (defn- handle-api-inelastic [req]
@@ -812,10 +822,13 @@
     (GET "/app.js" [] (serve-resource "app.js"))
     (GET "/js/dashboard.js" [] (serve-resource "js/dashboard.js"))
     (GET "/api/health" [] (response {:status "ok" :message "DWBA Web Dashboard API"}))
-    (GET "/api/parameters" [] (response {:default_parameters {:energies [5.0 10.0 15.0 20.0 25.0] :L_values [0 1 2 3 4 5]
-                                                               :V0 40.0 :R0 2.0 :a0 0.6 :radius 3.0
+    (GET "/api/parameters" [] (response {:default_parameters {:energies [50.0] :L_values [0 1 2 3 4 5]
+                                                               :V0 65.0 :R0 7.5 :a0 0.67 :radius 3.0
+                                                               :elastic_projectile "a"
+                                                               :elastic_target "148Sm"
                                                                :elastic_dsigma_L_max elastic-dsigma-L-max-default
-                                                               :W0 0.0 :R_W 2.0 :a_W 0.6
+                                                               ;; Volume imaginary WS → **`functions/*elastic-imag-ws-params*`** when **W0 > 0**
+                                                               :W0 30.0 :R_W 7.5 :a_W 0.67
                                                                :E_ex 4.44 :lambda 2 :beta 0.25 :reaction_type "p-d"
                                                                :inelastic_model "standard"
                                                                :li11_optical_set "V" :li11_beta_scale 1.0 :li11_L_max 22
@@ -826,7 +839,7 @@
                                                                :transfer_W0 0.0 :transfer_RW 2.0 :transfer_aW 0.6}
                                          :parameter_ranges {:V0 {:min -100.0 :max 100.0 :step 1.0} :R0 {:min 0.5 :max 10.0 :step 0.1}
                                                             :a0 {:min 0.1 :max 2.0 :step 0.1} :radius {:min 1.0 :max 30.0 :step 0.1}
-                                                            :W0 {:min 0.0 :max 50.0 :step 0.5} :R_W {:min 0.5 :max 6.0 :step 0.1} :a_W {:min 0.1 :max 2.0 :step 0.1}
+                                                            :W0 {:min 0.0 :max 80.0 :step 0.5} :R_W {:min 0.5 :max 12.0 :step 0.1} :a_W {:min 0.1 :max 2.0 :step 0.1}
                                                             :E_ex {:min 0.0 :max 20.0 :step 0.1} :lambda {:min 1 :max 5 :step 1} :beta {:min 0.0 :max 1.0 :step 0.01}}}))
     (GET "/api/transfer-default" req (handle-transfer-default req))
     (OPTIONS "/api/health" [] (response nil))

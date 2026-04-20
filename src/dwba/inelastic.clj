@@ -33,7 +33,7 @@
   (:require [functions :refer [WS solve-numerov]]
             [fastmath.core :as m]
             [fastmath.polynomials :as poly]
-            [complex :refer [re im mag complex-cartesian complex-polar add mul]]
+            [complex :refer [re im mag complex-cartesian complex-polar add mul complex-conjugate]]
             [dwba.transfer :as transfer :refer [spherical-harmonic clebsch-gordan]])
 )
 ;; ============================================================================
@@ -768,6 +768,7 @@
      - :mass-factor - Mass factor (2μ/ħ²), defaults to functions/mass-factor
      - :global-set - Global potential (optional, auto-selected: :ch89 for :p/:n, :daehnick80 for :d)
      - :distorted-norm — **`:coulomb-tail`** (default on charged branches), **`:bind-flux`** (DWUCK **BIND**-style **k**/|**H⁻|**), **`:raw`**, or **`:max`** (**`distorted-wave-optical`**).
+     - :coulomb-Z-pair — when using **`:optical-potential-fn`**, pass **`[Z₁ Z₂]`** (projectile charge, target charge) so **`:coulomb-tail`** / **`:bind-flux`** can build **η** and tail **ρ**. **Do not** use **`:max`** when summing many **L** — it rescales each partial wave independently and wrecks relative **L** weights (**`dwba.transfer` / `distorted-wave-optical`** doc).
    
    For **S** from **R = u/(a u′)** use **`distorted-wave-numerov-R-for-smatrix`** + **`distorted-wave-coulomb-S-from-numerov-R`** in **`dwba.transfer`**.
    
@@ -795,20 +796,33 @@
                             :target-Z 8
                             :E-lab 10.0)"
   [E-i L-i V-params h r-max & {:keys [optical-potential-fn projectile-type target-A target-Z E-lab s j mass-factor global-set
-                                       W-params V-so R-so a-so coulomb-R-C distorted-norm]
+                                       W-params V-so R-so a-so coulomb-R-C distorted-norm coulomb-Z-pair]
                                :or {s 0.5 distorted-norm :coulomb-tail}}]
   (cond
     ;; Use full optical potential if provided
     optical-potential-fn
     (let [j-val (or j (+ L-i s))
           mf (or mass-factor functions/mass-factor)
-          opt-kw (case distorted-norm
-                   :max [:normalize-mode :max]
-                   :coulomb-tail
-                   (throw (ex-info
-                           "distorted-wave-entrance: :coulomb-tail needs Z₁,Z₂ for η — use WS+Coulomb branch or call transfer/distorted-wave-optical directly"
-                           {:distorted-norm distorted-norm}))
-                   nil)]
+          opt-kw (cond
+                   (= distorted-norm :max) [:normalize-mode :max]
+                   (= distorted-norm :raw) nil
+                   (= distorted-norm :coulomb-tail)
+                   (or (when (and (vector? coulomb-Z-pair) (= 2 (count coulomb-Z-pair)))
+                         (distorted-wave-optical-kwseq :coulomb-tail E-i r-max mf
+                                                       (long (nth coulomb-Z-pair 0))
+                                                       (long (nth coulomb-Z-pair 1))))
+                       (throw (ex-info
+                               (str "distorted-wave-entrance: :coulomb-tail with :optical-potential-fn requires "
+                                    ":coulomb-Z-pair [Z1 Z2] (e.g. [2 8] for α on ¹⁶O)")
+                               {:distorted-norm distorted-norm :coulomb-Z-pair coulomb-Z-pair})))
+                   (= distorted-norm :bind-flux)
+                   (let [[Z1 Z2] (or (and (vector? coulomb-Z-pair) (= 2 (count coulomb-Z-pair))
+                                         coulomb-Z-pair)
+                                    [0 0])]
+                     (distorted-wave-optical-kwseq :bind-flux E-i r-max mf (long Z1) (long Z2)))
+                   :else
+                   (throw (ex-info "distorted-wave-entrance: unknown :distorted-norm for :optical-potential-fn"
+                                   {:distorted-norm distorted-norm})))]
       (if opt-kw
         (apply transfer/distorted-wave-optical E-i L-i s j-val optical-potential-fn r-max h mf opt-kw)
         (transfer/distorted-wave-optical E-i L-i s j-val optical-potential-fn r-max h mf)))
@@ -877,6 +891,7 @@
      - :mass-factor - Mass factor (2μ/ħ²), defaults to functions/mass-factor
      - :global-set - Global potential (optional, auto-selected: :ch89 for :p/:n, :daehnick80 for :d)
      - :distorted-norm — same as **`distorted-wave-entrance`** (uses **E_f** for tail **η**, **ρ**).
+     - :coulomb-Z-pair — same as **`distorted-wave-entrance`** when using **`:optical-potential-fn`**.
    
    Same **`distorted-wave-optical`** convention as **`distorted-wave-entrance`**.
    
@@ -904,7 +919,7 @@
                         :residual-Z 7
                         :E-lab 5.0)"
   [E-i E-ex L-f V-params h r-max & {:keys [optical-potential-fn outgoing-type residual-A residual-Z E-lab s j mass-factor global-set
-                                            W-params V-so R-so a-so coulomb-R-C distorted-norm]
+                                            W-params V-so R-so a-so coulomb-R-C distorted-norm coulomb-Z-pair]
                                     :or {s 0.5 distorted-norm :coulomb-tail}}]
   (let [E-f (- E-i E-ex)]
     (cond
@@ -912,13 +927,26 @@
       optical-potential-fn
       (let [j-val (or j (+ L-f s))
             mf (or mass-factor functions/mass-factor)
-            opt-kw (case distorted-norm
-                     :max [:normalize-mode :max]
-                     :coulomb-tail
-                     (throw (ex-info
-                             "distorted-wave-exit: :coulomb-tail needs Z₁,Z₂ for η — use WS+Coulomb branch or call transfer/distorted-wave-optical directly"
-                             {:distorted-norm distorted-norm}))
-                     nil)]
+            opt-kw (cond
+                     (= distorted-norm :max) [:normalize-mode :max]
+                     (= distorted-norm :raw) nil
+                     (= distorted-norm :coulomb-tail)
+                     (or (when (and (vector? coulomb-Z-pair) (= 2 (count coulomb-Z-pair)))
+                           (distorted-wave-optical-kwseq :coulomb-tail E-f r-max mf
+                                                         (long (nth coulomb-Z-pair 0))
+                                                         (long (nth coulomb-Z-pair 1))))
+                         (throw (ex-info
+                                 (str "distorted-wave-exit: :coulomb-tail with :optical-potential-fn requires "
+                                      ":coulomb-Z-pair [Z1 Z2]")
+                                 {:distorted-norm distorted-norm :coulomb-Z-pair coulomb-Z-pair})))
+                     (= distorted-norm :bind-flux)
+                     (let [[Z1 Z2] (or (and (vector? coulomb-Z-pair) (= 2 (count coulomb-Z-pair))
+                                           coulomb-Z-pair)
+                                      [0 0])]
+                       (distorted-wave-optical-kwseq :bind-flux E-f r-max mf (long Z1) (long Z2)))
+                     :else
+                     (throw (ex-info "distorted-wave-exit: unknown :distorted-norm for :optical-potential-fn"
+                                     {:distorted-norm distorted-norm})))]
         (if opt-kw
           (apply transfer/distorted-wave-optical E-f L-f s j-val optical-potential-fn r-max h mf opt-kw)
           (transfer/distorted-wave-optical E-f L-f s j-val optical-potential-fn r-max h mf)))
@@ -1031,11 +1059,8 @@
                                chi-i-val (get chi-i i)
                                chi-f-val (get chi-f i)
                                V-trans-val (get V-trans-vec i)
-                               chi-f-conj (if (number? chi-f-val)
-                                           chi-f-val
-                                           (let [re-val (re chi-f-val)
-                                                 im-val (im chi-f-val)]
-                                             (complex-cartesian re-val (- im-val))))
+                               ;; Exit **χ_f^*** — same convention as **`transfer-amplitude-post`** (**`complex-conjugate`**).
+                               chi-f-conj (complex-conjugate chi-f-val)
                                ;; For complex numbers, need to handle multiplication properly
                                product (if (and (number? chi-i-val) (number? chi-f-conj) (number? V-trans-val))
                                         (* chi-f-conj V-trans-val chi-i-val)

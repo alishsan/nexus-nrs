@@ -196,6 +196,7 @@ class DWBADashboard {
         const tgt = (document.getElementById('elastic_target') || {}).value || '16O';
         if (tgt === '12C') return { A: 12, Z: 6 };
         if (tgt === '16O') return { A: 16, Z: 8 };
+        if (tgt === '148Sm') return { A: 148, Z: 62 };
         const A = parseInt((document.getElementById('elastic_target_A') || {}).value, 10);
         const Z = parseInt((document.getElementById('elastic_target_Z') || {}).value, 10);
         return {
@@ -294,6 +295,10 @@ class DWBADashboard {
     }
 
     setParameters(params) {
+        const setIf = (id, v) => {
+            const el = document.getElementById(id);
+            if (el && v !== undefined && v !== null) el.value = v;
+        };
         document.getElementById('V0').value = params.V0;
         document.getElementById('R0').value = params.R0;
         document.getElementById('a0').value = params.a0;
@@ -324,6 +329,9 @@ class DWBADashboard {
             const el = document.getElementById('elastic_dsigma_L_max');
             if (el) el.value = params.elastic_dsigma_L_max;
         }
+        setIf('elastic_W0', params.W0);
+        setIf('elastic_RW', params.R_W);
+        setIf('elastic_aW', params.a_W);
         this.toggleElasticGenericInputs && this.toggleElasticGenericInputs();
 
         // Update slider displays
@@ -333,10 +341,6 @@ class DWBADashboard {
         document.getElementById('radius-value').textContent = `${params.radius} fm`;
 
         // Transfer-tab defaults (optional keys from /api/parameters)
-        const setIf = (id, v) => {
-            const el = document.getElementById(id);
-            if (el && v !== undefined && v !== null) el.value = v;
-        };
         setIf('transfer_V0', params.V0);
         setIf('transfer_R0', params.R0);
         setIf('transfer_a0', params.a0);
@@ -372,8 +376,8 @@ class DWBADashboard {
         };
         const energyRangeEl = document.getElementById('energy-range');
         const lValuesEl = document.getElementById('L-values');
-        // Match backend default: [5, 10, 15, 20, 25]
-        const defaultEnergies = [5, 10, 15, 20, 25];
+        // Match backend **default-energies** (α + ¹⁴⁸Sm preset: E_lab = 50 MeV)
+        const defaultEnergies = [50];
         const defaultL = [0, 1, 2, 3, 4, 5];
         let energies = (energyRangeEl && energyRangeEl.value || '')
             .split(',').map(s => s.trim()).filter(s => s.length > 0);
@@ -382,9 +386,9 @@ class DWBADashboard {
         if (energies.length === 0) energies = defaultEnergies.map(String);
         if (L_values.length === 0) L_values = defaultL.map(String);
         return {
-            V0: num('V0', 40),
-            R0: num('R0', 2),
-            a0: num('a0', 0.6),
+            V0: num('V0', 65),
+            R0: num('R0', 7.5),
+            a0: num('a0', 0.67),
             radius: num('radius', 3),
             // Send energies and L_values as comma-separated strings so backend always gets current values
             energies: Array.isArray(energies) ? energies.join(',') : String(energies),
@@ -397,15 +401,15 @@ class DWBADashboard {
             target: (document.getElementById('transfer_target') || {}).value || '16O',
             projectile: (document.getElementById('inelastic_projectile') || {}).value || 'p',
             inelastic_target: (document.getElementById('inelastic_target') || {}).value || '12C',
-            elastic_projectile: (document.getElementById('elastic_projectile') || {}).value || 'p',
-            elastic_target: (document.getElementById('elastic_target') || {}).value || '16O',
-            elastic_target_A: int('elastic_target_A', 16),
-            elastic_target_Z: int('elastic_target_Z', 8),
-            elastic_dsigma_L_max: int('elastic_dsigma_L_max', 22),
-            // Complex Woods-Saxon for elastic (optical potential)
-            W0: num('elastic_W0', 0),
-            R_W: num('elastic_RW', 2.0),
-            a_W: num('elastic_aW', 0.6),
+            elastic_projectile: (document.getElementById('elastic_projectile') || {}).value || 'a',
+            elastic_target: (document.getElementById('elastic_target') || {}).value || '148Sm',
+            elastic_target_A: int('elastic_target_A', 148),
+            elastic_target_Z: int('elastic_target_Z', 62),
+            elastic_dsigma_L_max: int('elastic_dsigma_L_max', 41),
+            // Complex Woods-Saxon for elastic → **`functions/*elastic-imag-ws-params*`**
+            W0: num('elastic_W0', 30),
+            R_W: num('elastic_RW', 7.5),
+            a_W: num('elastic_aW', 0.67),
             // Transfer tab (POST /api/transfer)
             transfer_energies: ((document.getElementById('transfer_energies') || {}).value || '').trim(),
             transfer_L_values: (document.getElementById('transfer_L_values') || {}).value || '1',

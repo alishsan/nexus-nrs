@@ -181,10 +181,10 @@
    :target (str/trim (or (get-value-safe "transfer_target") "16O"))
    :projectile (or (get-value-safe "inelastic_projectile") "p")
    :inelastic_target (or (get-value-safe "inelastic_target") "12C")
-   :elastic_projectile (or (get-value-safe "elastic_projectile") "p")
-   :elastic_target (or (get-value-safe "elastic_target") "16O")
-   :elastic_target_A (get-int-safe "elastic_target_A" 16)
-   :elastic_target_Z (get-int-safe "elastic_target_Z" 8)
+   :elastic_projectile (or (get-value-safe "elastic_projectile") "a")
+   :elastic_target (or (get-value-safe "elastic_target") "148Sm")
+   :elastic_target_A (get-int-safe "elastic_target_A" 148)
+   :elastic_target_Z (get-int-safe "elastic_target_Z" 62)
    ;; Transfer tab (POST /api/transfer; matches public/app.js)
    :transfer_energies (str/trim (or (get-value-safe "transfer_energies") ""))
    :transfer_L_values (or (get-value-safe "transfer_L_values") "1")
@@ -200,10 +200,10 @@
    :transfer_aW (get-float-safe "transfer_aW" 0.6)
    :transfer_r_max (get-float-safe "transfer_r_max" 20)
    :transfer_h (get-float-safe "transfer_h" 0.01)
-   ;; Complex Woods-Saxon for elastic (optical potential)
-   :W0 (or (get-float "elastic_W0") 0)
-   :R_W (or (get-float "elastic_RW") 2.0)
-   :a_W (or (get-float "elastic_aW") 0.6)})
+   ;; Complex Woods-Saxon for elastic → `*elastic-imag-ws-params*`
+   :W0 (or (get-float "elastic_W0") 30)
+   :R_W (or (get-float "elastic_RW") 7.5)
+   :a_W (or (get-float "elastic_aW") 0.67)})
 
 ;; Show status message
 (defn show-status [message type]

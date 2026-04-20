@@ -45,8 +45,8 @@
       "energy_lab_MeV_typical": [50],
       "real": {"V0": 65, "R0": 7.5, "a0": 0.67},
       "ws_vector_real": [65.0, 7.5, 0.67],
-      "imaginary": {"W0": 3.0, "R_W": 7.5, "a_W": 0.67},
-      "ws_vector_imaginary": [3.0, 7.5, 0.67],
+      "imaginary": {"W0": 30.0, "R_W": 7.5, "a_W": 0.67},
+      "ws_vector_imaginary": [30.0, 7.5, 0.67],
       "source": "examples/example_alpha_Sm148_elastic.clj (active defaults)"
     },
     {

@@ -2529,12 +2529,12 @@
 
 (defn austern-radial-integrand-zr-F-Ra-Rb-r2-complex
   "Like **`austern-radial-integrand-zr-F-Ra-Rb-r2`**, but **f_α**, **f_β** may be **complex** (**R = u/r**).
-  Entries: **F(r) f_α(r) f_β((M_A/M_B)r) r²** (same indexing as real ZR DWBA).
+  Entries: **F(r) f_α(r) f_β^*((M_A/M_B)r) r²** — **complex conjugate on the exit leg** so this ZR
+  integrand matches **`transfer-amplitude-post`** (**χ*_f · F · χ_i · r²**, same reduced **R = u/r** rule).
 
-  **Convention:** both channels use the outgoing (+) Numerov solution directly
-  (standard DWBA practice, consistent with DWUCK4).  For real potentials this equals
-  the post-form integrand **F χ_α^{(+)} [χ_β^{(-)*}]** exactly by time-reversal;
-  for complex potentials it is the standard approximation."
+  **Numerov:** both **u_α**, **u_β** are still the outgoing **(+)** solutions from **`distorted-wave-optical`**;
+  only the **exit** factor in the product is **conjugated**, as in the post-form DWBA volume element.
+  For **real** **f_β**, **f_β^* = f_β** (no change vs the real integrand)."
   [F-vec u-alpha u-beta h zr-mass-ratio]
   (let [h* (double h)
         n (min (count F-vec) (count u-alpha) (count u-beta))
@@ -2548,8 +2548,9 @@
                   Fi-c (if (number? Fi) (complex-cartesian (double Fi) 0.0) Fi)
                   fa-c (if (number? fa-i) (complex-cartesian (double fa-i) 0.0) fa-i)
                   fb-c (if (number? fb-i) (complex-cartesian (double fb-i) 0.0) fb-i)
+                  fb-star (complex-conjugate fb-c)
                   rsq (* r r)]
-              (mul Fi-c fa-c fb-c (complex-cartesian rsq 0.0))))
+              (mul Fi-c fa-c fb-star (complex-cartesian rsq 0.0))))
           (range n))))
 
 (defn austern-radial-integral-I-zr-eq-5-5-from-u-complex
@@ -2684,13 +2685,14 @@
   "Same as **`handbook-radial-integral-I-zr-from-neutron-bound`** but keeps **complex** distorted waves.
 
   Uses **`austern-radial-integral-I-zr-eq-5-5-from-u-complex`**: the integrand is
-  **F(r) · f_{αL}(r) · f_{βL}((M_A/M_B)r) · r²** with **f** = **u/r** preserved as complex
-  (no **Re()** stripping). Returns a **complex** number **I_{L_β L_α}**.
+  **F(r) · f_{αL}(r) · f_{βL}^*((M_A/M_B)r) · r²** with **f** = **u/r** preserved as complex
+  (exit leg **conjugated**, same as **`transfer-amplitude-post`**). Returns **I_{L_β L_α}**.
 
   Required when the optical potential is absorptive (imaginary part non-zero): taking only
   **Re(u)** loses the **Im(u_α)·Im(u_β)** cross-term and the imaginary part of **I**, which
   distorts the interference pattern between even- and odd-**L_α** partial waves and can
-  produce an unphysically large backward-angle cross section."
+  inflate backward angles. Omitting **f_β^*** (while **Im U ≠ 0**) was inconsistent with
+  the post-form volume element and also distorted **σ(θ)** near **π**."
   [neutron-u-reduced u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
   (austern-radial-integral-I-zr-eq-5-5-from-u-complex
     (handbook-F-lsj-radial-from-neutron-bound-u neutron-u-reduced h)

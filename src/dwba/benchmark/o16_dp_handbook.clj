@@ -4,6 +4,7 @@
 
   **Radial:** **F_{ℓsj} = R_n = u/r** (bound neutron in **¹⁷O**); **`handbook-radial-integral-I-zr-from-neutron-bound`**
   uses **(5.5)** **(M_B/M_A)(4π/(k_α k_β))** on **∫ F R_α R_β r² dr** (same **I** as Austern ZR for this **β** / **dσ** chain). **M_A = M(¹⁶O)**, **M_B = M(¹⁷O)**.
+  Export or diff **I_{L_β L_α}** vs DWUCK: **`dwba.benchmark.o16-dp-radial-i-benchmark`** and **`examples/o16_dp_radial_I_diff.clj`**.
 
   **Angular:** **`handbook-zr-multipole-amplitude-sum`** + **`handbook-zr-rows-with-coulomb-sigma`**.
 
