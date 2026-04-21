@@ -23,7 +23,7 @@
   (:require [dwba.benchmark.o16-dp-handbook :as oh]
             [dwba.transfer :as t]
             [functions :as fn]
-            [complex :refer [re im mag mul add subt2 add2 complex-cartesian complex-polar]]
+            [complex :refer [re im mag mul add subt2 complex-cartesian complex-polar]]
             [fastmath.polynomials :as poly]
             [fastmath.core :as m]
             [incanter.core :as i]
@@ -158,18 +158,14 @@
             fc-sq   (* 10.0 (Math/pow (mag (fn/coulomb-scattering-amplitude-thompson-nunes-eq-3181 th-rad eta k)) 2))
             ;; f̃_C and f̃_N using product formula (no Gamma for L≥1):
             f-tilde-c (fn/coulomb-amplitude-tilde th-rad eta k)
-            f-tilde-n (reduce (fn [acc ^long L]
-                                (let [Sn      (nth sn-vec L)
-                                      ph-prod (fn/coulomb-phase-diff L eta)
-                                      pl      (double (poly/eval-legendre-P L (m/cos th-rad)))
-                                      bracket (mul ph-prod (subt2 Sn 1.0))
-                                      ;; (-i/2k)(2L+1) P_L × bracket; -i = complex-polar(-π/2, 1)
-                                      contrib (mul (complex-polar (* -0.5 Math/PI) (/ (inc (* 2 L)) (* 2.0 k)))
-                                                   pl bracket)]
-                                  (add2 acc contrib)))
-                              (complex-cartesian 0.0 0.0)
-                              (range (inc L-tab)))
-            tilde-sq  (* 10.0 (Math/pow (mag (add2 f-tilde-c f-tilde-n)) 2))
+            ;; **`k`** from **`mass-factor-i`**; **η** explicit so **`coulomb-phase-diff`** matches the table above.
+            f-tilde-n (binding [fn/mass-factor mass-factor-i
+                                fn/Z1Z2ee z12
+                                fn/*elastic-imag-ws-params* ws-imag
+                                fn/*partial-wave-s-matrix-fn*
+                                (fn [_e _v ^long L] (nth sn-vec L))]
+                        (fn/elastic-nuclear-amplitude-tilde-fn e-cm-i ws-real th-rad L-tab eta))
+            tilde-sq  (* 10.0 (Math/pow (mag (add f-tilde-c f-tilde-n)) 2))
             ;; Gamma-based reference via differential-cross-section-nuclear-cut:
             ref-sq    (binding [fn/mass-factor mass-factor-i
                                 fn/Z1Z2ee z12

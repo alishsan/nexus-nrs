@@ -17,7 +17,7 @@
 ;; **f_N** = partial waves **L ≤ L_nuclear_cut** (vanishes when **`s-matrix` = 1**, pure point Coulomb in **(3.1.84)**).
 ;; Same convention as the web dashboard elastic API (*elastic-imag-ws-params*).
 ;;
-;; A printed table compares that reference to **|f̃_C + f̃_N|²** (**`coulomb-amplitude-tilde`** + **`coulomb-phase-diff`** partial sum), same as **`examples/example_16Odp.clj`** — **dσ** is unchanged (**σ_0** is a global phase).
+;; A printed table compares that reference to **|f̃_C + f̃_N|²** (**`coulomb-amplitude-tilde`** + **`elastic-nuclear-amplitude-tilde-fn`**), same as **`examples/example_16Odp.clj`** — **dσ** is unchanged (**σ_0** is a global phase).
 ;;
 ;; Optional full optical + finite charge radius (swap **V-params** / **imag-ws-params**):
 ;;   Real:    V₀ = 65 MeV,  R = 7.5 fm, a = 0.67 fm
@@ -45,12 +45,10 @@
 (require '[functions :refer [differential-cross-section-nuclear-cut mass-factor mass-factor-from-mu
                              s-matrix phase-shift Z1Z2ee *elastic-imag-ws-params*
                              coulomb-sigma-L channel-sommerfeld-eta
-                             coulomb-amplitude-tilde coulomb-phase-diff
+                             coulomb-amplitude-tilde elastic-nuclear-amplitude-tilde-fn
                              coulomb-scattering-amplitude-thompson-nunes-eq-3181]]
          :reload)
 (require '[complex :as cpx]
-         '[fastmath.polynomials :as poly]
-         '[fastmath.core :as m]
          '[incanter.core :as i]
          '[incanter.charts :as c]
          '[clojure.java.io :as io])
@@ -114,30 +112,14 @@
             (Math/pow s 4.0))))))
 
 (defn- elastic-dsigma-tilde-mb-sr
-  "**10 |f̃_C + f̃_N|²** (**mb/sr**): **f̃_C** = **`coulomb-amplitude-tilde`**, **f̃_N** = partial waves **L ≤ L-cut** with
-  **`coulomb-phase-diff`** (same construction as **`example_16Odp`**). Requires **`mass-factor`**, **`Z1Z2ee`**, **`*elastic-imag-ws-params*`** bound like **`differential-cross-section-nuclear-cut`**."
+  "**10 |f̃_C + f̃_N|²** (**mb/sr**): **`coulomb-amplitude-tilde`** + **`elastic-nuclear-amplitude-tilde-fn`** (**`functions`**).
+  Requires **`mass-factor`**, **`Z1Z2ee`**, **`*elastic-imag-ws-params*`** bound like **`differential-cross-section-nuclear-cut`**."
   [^double e-cm V-params ^double theta-rad ^long L-cut]
   (let [eta (channel-sommerfeld-eta e-cm)
         k (Math/sqrt (* (double mass-factor) e-cm))
         f-tilde-c (coulomb-amplitude-tilde theta-rad eta k)
-        f-tilde-n (reduce (fn [acc ^long L]
-                            (try
-                              (let [Sn (s-matrix e-cm V-params L)
-                                    reS (double (cpx/re Sn))
-                                    imS (double (cpx/im Sn))]
-                                (if (or (Double/isNaN reS) (Double/isNaN imS)
-                                        (Double/isInfinite reS) (Double/isInfinite imS))
-                                  acc
-                                  (let [ph-prod (coulomb-phase-diff L eta)
-                                        pl (double (poly/eval-legendre-P L (m/cos theta-rad)))
-                                        bracket (cpx/mul ph-prod (cpx/subt2 Sn 1.0))
-                                        contrib (cpx/mul (cpx/complex-polar (* -0.5 Math/PI) (/ (inc (* 2 L)) (* 2.0 k)))
-                                                         pl bracket)]
-                                    (cpx/add2 acc contrib))))
-                              (catch Exception _ acc)))
-                          (cpx/complex-cartesian 0.0 0.0)
-                          (range (inc L-cut)))]
-    (* 10.0 (Math/pow (cpx/mag (cpx/add2 f-tilde-c f-tilde-n)) 2))))
+        f-tilde-n (elastic-nuclear-amplitude-tilde-fn e-cm V-params theta-rad L-cut)]
+    (* 10.0 (Math/pow (cpx/mag (cpx/add f-tilde-c f-tilde-n)) 2))))
 
 (defn- sigma-ratio-vectors-for-L-cut
   "Vectors **[θ_deg]**, **[σ/σ_Ruth]** for **differential-cross-section-nuclear-cut** with nuclear sum **L ≤ L-cut**."

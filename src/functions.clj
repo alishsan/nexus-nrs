@@ -1380,6 +1380,49 @@ rho (* k a) ]
               (c/complex-cartesian 0.0 0.0)
               amps))))
 
+(defn elastic-nuclear-amplitude-tilde-fn
+  "Elastic **f̃_N(θ)** (**fm**): partial-wave sum **L = 0 … L_cut** with the **σ_0-stripped** Coulomb phase.
+
+  Each term is **−i/(2k) · (2L+1) P_L(cos θ) · e^{2i(σ_L−σ_0)} · (S_L^n − 1)** where **e^{2i(σ_L−σ_0)}** =
+  **`coulomb-phase-diff`** (product form, no Gamma) and **S_L^n** = **`s-matrix-for-partial-wave-sum`**.
+
+  Same geometry as **`elastic-nuclear-amplitude-fn`**, but **(S^n−1)** is multiplied by **e^{2i(σ_L−σ_0)}** instead of
+  using **e^{2iσ_L}(S^n−1)** in one bracket.  With **f̃_C** = **`coulomb-amplitude-tilde`**, **|f̃_C + f̃_N| = |f_C + f_N|**.
+
+  Optional **`binding [*`partial-wave-s-matrix-fn*` (fn [E V L] …)]`** supplies **S_L^n** (e.g. Numerov **R** → **S**
+  in **`example_16Odp`**); default is **`s-matrix`** on **ws-params**.
+
+  **5-arg** **`[E-cm ws-params theta-cm L-cut η]`**: use this **η** (radians, dimensionless Sommerfeld) in **`coulomb-phase-diff`**
+  instead of **`channel-sommerfeld-eta`** — for scripts that already fixed **η** from the entrance channel (must still
+  **`binding`** **`mass-factor`** / **`Z1Z2ee`** so **k** matches that channel)."
+  ([E-cm ws-params theta-cm L-cut]
+   (elastic-nuclear-amplitude-tilde-fn E-cm ws-params theta-cm L-cut (channel-sommerfeld-eta E-cm)))
+  ([E-cm ws-params theta-cm L-cut eta]
+   (let [eta-d (double eta)
+         L-upper (long L-cut)
+         k (m/sqrt (* mass-factor E-cm))
+         L-seq (range 0 (inc L-upper))
+         amp-for-L
+         (fn [^long L]
+           (let [ph-prod (coulomb-phase-diff L eta-d)
+                 S-L-n (s-matrix-for-partial-wave-sum E-cm ws-params L)
+                 bracket (c/mul ph-prod (c/subt2 S-L-n 1.0))
+                 f-L (c/mul (c/div (c/complex-cartesian 0 -1) (* 2.0 k))
+                            (inc (* 2 L))
+                            (poly/eval-legendre-P L (m/cos theta-cm))
+                            bracket)]
+             (when (and (complex-finite? S-L-n) (complex-finite? ph-prod) (complex-finite? f-L))
+               f-L)))
+         amps (keep amp-for-L L-seq)]
+     (if (empty? amps)
+       (c/complex-cartesian 0.0 0.0)
+       (reduce (fn [acc a]
+                 (if (complex-finite? a)
+                   (c/add acc a)
+                   acc))
+               (c/complex-cartesian 0.0 0.0)
+               amps)))))
+
 (defn differential-cross-section-nuclear-cut
   "Elastic **dσ/dΩ** in **mb/sr**: **10 × |f_C(θ) + f_N(θ)|²** with **|·|²** in **fm²/sr** (**×10** = **1 fm² = 10 mb**).
 

@@ -382,7 +382,9 @@
     (let [p (params req)
           [energies L-values] (ensure-energies-L (parse-doubles (:energies p)) (parse-ints (:L_values p)))
           ws (ws-params-from p)
-          radius (parse-double-default (:radius p) 3.0)]
+          radius-raw (parse-double-default (:radius p) 100.0)
+          ;; **≤ 0** ⇒ treat as **100** fm for Numerov / phase-shift grid (elastic tab uses **0** for automatic match separately).
+          radius (if (pos? radius-raw) radius-raw 100.0)]
       (let [compare-methods (boolean (:compare_methods p))
             h-numerov 0.01
             combinations (for [E energies L L-values] [E L])
@@ -428,7 +430,9 @@
           elastic-dsigma-L-values (vec (range (inc elastic-dsigma-L-max)))
           ws (ws-params-from p)
           ws-w (ws-w-params-from p)
-          radius (parse-double-default (:radius p) 3.0)
+          ;; **`functions/*elastic-match-radius-fm*`**: request **:radius** (fm). **≤ 0** ⇒ omit (automatic **2(R₀+a₀)**).
+          radius-request (parse-double-default (:radius p) 100.0)
+          elastic-match-r (when (pos? radius-request) (double radius-request))
           angles (or (seq (parse-doubles (:angles p))) (range 0.0 181.0 10.0))
           elastic-projectile (or (:elastic_projectile p) (:projectile p) "a")
           elastic-target (or (:elastic_target p) (:inelastic_target p) (:target p) "148Sm")
@@ -448,7 +452,8 @@
                                [938.272 1])
           target-mass (* 931.5 target-A)
           mu (/ (* proj-mass target-mass) (+ proj-mass target-mass))
-          mass-factor-elastic (/ (* 2.0 mu) (* 197.327 197.327))
+          ;; Match **`functions/mass-factor-from-mu`** (**`hbarc`** in **`functions.clj`**, not a hard-coded 197.327).
+          mass-factor-elastic (phys/mass-factor-from-mu mu)
           z1z2ee (* proj-Z target-Z 1.44)
           ;; E in the request is lab-frame projectile kinetic (MeV). Elastic **dσ** fns expect CM kinetic — same as
           ;; Rutherford ratio in dashboard JS (`labToCmKineticMeV` / `e_cm_factor`).
@@ -462,7 +467,8 @@
                                  dsigma-complex (if dsigma-fn
                                                   (binding [phys/mass-factor mass-factor-elastic
                                                             phys/Z1Z2ee z1z2ee
-                                                            phys/*elastic-imag-ws-params* ws-w]
+                                                            phys/*elastic-imag-ws-params* ws-w
+                                                            phys/*elastic-match-radius-fm* elastic-match-r]
                                                     (dsigma-fn e-cm ws theta-rad elastic-dsigma-L-max))
                                                   0.0)
                                  dsigma-mb-sr (if (number? dsigma-complex) dsigma-complex (c/mag dsigma-complex))]
@@ -474,10 +480,11 @@
                                               :L_values L-values
                                               :elastic_dsigma_L_values elastic-dsigma-L-values
                                               :elastic_dsigma_model "differential-cross-section-nuclear-cut"
-                                              :elastic_dsigma_L_note "Elastic dσ/dΩ = 10|f_C+f_N|² (T&N); f_N sums L = 0 … elastic_dsigma_L_max. Imaginary volume WS (W0,R_W,a_W) is passed via *elastic-imag-ws-params* when W0>0 (complex Numerov). Point Coulomb ratio sanity: V0=R0=0 (a0>0) gives dσ/σ_Ruth = 1. Default preset: α+¹⁴⁸Sm, L_max=41; for p+light targets, large L_max can inflate f_N—raise only with care."
+                                              :elastic_dsigma_L_note "Elastic dσ/dΩ = 10|f_C+f_N|² (T&N); f_N sums L = 0 … elastic_dsigma_L_max. Imaginary WS via *elastic-imag-ws-params* when W0>0. **Calculation radius** (main panel): if >0, binds *elastic-match-radius-fm* for R-matrix/Coulomb match; if ≤0, uses automatic a=2(R₀+a₀) from V (Sm example default). **mass-factor** uses functions/hbarc via mass-factor-from-mu."
                                               :elastic_dsigma_L_max elastic-dsigma-L-max
                                               :ws_params ws
-                                              :radius radius
+                                              :radius radius-request
+                                              :elastic_match_radius_fm elastic-match-r
                                               :angles angles
                                               :elastic_projectile elastic-projectile
                                               :elastic_target elastic-target}
@@ -823,7 +830,7 @@
     (GET "/js/dashboard.js" [] (serve-resource "js/dashboard.js"))
     (GET "/api/health" [] (response {:status "ok" :message "DWBA Web Dashboard API"}))
     (GET "/api/parameters" [] (response {:default_parameters {:energies [50.0] :L_values [0 1 2 3 4 5]
-                                                               :V0 65.0 :R0 7.5 :a0 0.67 :radius 3.0
+                                                               :V0 65.0 :R0 7.5 :a0 0.67 :radius 100.0
                                                                :elastic_projectile "a"
                                                                :elastic_target "148Sm"
                                                                :elastic_dsigma_L_max elastic-dsigma-L-max-default
@@ -838,7 +845,7 @@
                                                                :transfer_L_max 18
                                                                :transfer_W0 0.0 :transfer_RW 2.0 :transfer_aW 0.6}
                                          :parameter_ranges {:V0 {:min -100.0 :max 100.0 :step 1.0} :R0 {:min 0.5 :max 10.0 :step 0.1}
-                                                            :a0 {:min 0.1 :max 2.0 :step 0.1} :radius {:min 1.0 :max 30.0 :step 0.1}
+                                                            :a0 {:min 0.1 :max 2.0 :step 0.1} :radius {:min 0.0 :max 300.0 :step 1.0}
                                                             :W0 {:min 0.0 :max 80.0 :step 0.5} :R_W {:min 0.5 :max 12.0 :step 0.1} :a_W {:min 0.1 :max 2.0 :step 0.1}
                                                             :E_ex {:min 0.0 :max 20.0 :step 0.1} :lambda {:min 1 :max 5 :step 1} :beta {:min 0.0 :max 1.0 :step 0.01}}}))
     (GET "/api/transfer-default" req (handle-transfer-default req))

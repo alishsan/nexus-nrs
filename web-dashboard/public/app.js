@@ -389,7 +389,7 @@ class DWBADashboard {
             V0: num('V0', 65),
             R0: num('R0', 7.5),
             a0: num('a0', 0.67),
-            radius: num('radius', 3),
+            radius: num('radius', 100),
             // Send energies and L_values as comma-separated strings so backend always gets current values
             energies: Array.isArray(energies) ? energies.join(',') : String(energies),
             L_values: Array.isArray(L_values) ? L_values.join(',') : String(L_values),
