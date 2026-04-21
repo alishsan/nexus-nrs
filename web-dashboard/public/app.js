@@ -1106,7 +1106,8 @@ class DWBADashboard {
                 };
             }
             traces[key].x.push(point.energy);
-            traces[key].y.push(point.differential_cross_section);
+            const y = Number(point.differential_cross_section);
+            traces[key].y.push(Number.isFinite(y) ? Math.max(y, logFloor) : logFloor);
         });
 
         const plotData = Object.values(traces);
