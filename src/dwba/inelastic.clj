@@ -1528,6 +1528,44 @@
                      a-L (* (/ (inc (* 2 L)) 2.0) integral)]
                  [L a-L])))))
 
+(defn inelastic-differential-cross-section-angular
+  "Calculate inelastic dσ/dΩ(θ) from partial-wave amplitudes.
+
+   Uses a coherent partial-wave sum with amplitude-level angular projection:
+   T(θ) = Σ_L sqrt((2L+1)/(4π)) T_L P_L(cos θ)
+
+   Then maps to dσ/dΩ via `inelastic-differential-cross-section`.
+
+   Parameters:
+   - T-amplitudes: map {L -> T_L}, with T_L real or complex
+   - theta: CM angle in radians
+   - k-i: entrance wavenumber
+   - k-f: exit wavenumber
+   - E-i: entrance energy
+   - E-ex: excitation energy
+   - mass-factor: 2μ/ħ²
+
+   Returns: dσ/dΩ(θ) in mb/sr."
+  [T-amplitudes theta k-i k-f E-i E-ex mass-factor]
+  (let [theta (double theta)
+        cos-theta (Math/cos theta)
+        t-theta
+        (reduce (fn [acc [L T-L]]
+                  (let [L* (long L)
+                        weight (* (Math/sqrt (/ (double (inc (* 2 L*)))
+                                                (* 4.0 Math/PI)))
+                                  (double (poly/eval-legendre-P L* cos-theta)))
+                        term (if (number? T-L)
+                               (* weight (double T-L))
+                               (mul weight T-L))
+                        term-c (if (number? term)
+                                 (complex-cartesian (double term) 0.0)
+                                 term)]
+                    (add acc term-c)))
+                (complex-cartesian 0.0 0.0)
+                T-amplitudes)]
+    (inelastic-differential-cross-section t-theta k-i k-f E-i E-ex mass-factor)))
+
 (defn inelastic-angular-distribution
   "Calculate angular distribution for inelastic scattering.
    

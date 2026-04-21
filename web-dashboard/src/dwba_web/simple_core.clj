@@ -584,6 +584,8 @@
                                 [12 6])
           E-ex (parse-double-default (:E_ex p) 4.44)
           beta (parse-double-default (:beta p) 0.25)
+          theta-step (double (max 1.0 (min 30.0 (parse-double-default (:inelastic_theta_step p) 5.0))))
+          angles-deg (vec (range 5.0 180.0 theta-step))
           projectile-mass-MeV (case projectile-type
                                 :p 938.272
                                 :n 939.565
@@ -598,9 +600,8 @@
           n-points (int (/ r-max h))
           transition-form-factor-fn (or (resolve 'dwba.inelastic/transition-form-factor) (do (require 'dwba.inelastic) (resolve 'dwba.inelastic/transition-form-factor)))
           inelastic-amplitude-radial-fn (or (resolve 'dwba.inelastic/inelastic-amplitude-radial) (do (require 'dwba.inelastic) (resolve 'dwba.inelastic/inelastic-amplitude-radial)))
-          inelastic-dsigma-fn (or (resolve 'dwba.inelastic/inelastic-differential-cross-section) (do (require 'dwba.inelastic) (resolve 'dwba.inelastic/inelastic-differential-cross-section)))
+          inelastic-dsigma-angular-fn (or (resolve 'dwba.inelastic/inelastic-differential-cross-section-angular) (do (require 'dwba.inelastic) (resolve 'dwba.inelastic/inelastic-differential-cross-section-angular)))
           angular-factor (* 4.0 Math/PI)
-          zero-complex (c/complex-cartesian 0.0 0.0)
           ;; Charged **p**, **d**, **α**: explicit **ws** + Coulomb (`dwba.inelastic` WS+Coulomb branch); **n**: neutral **solve-numerov**; **nil** **ws** → global CH89/Daehnick.
           charged-inelastic? (#{:p :d :alpha} projectile-type)
           entrance-wave (fn [E-i L-i]
@@ -651,34 +652,40 @@
                                      :j (+ L-i spin)
                                      :mass-factor mass-factor))))]
         (let [inelastic-data (for [lambda lambdas
-                                  E-i    energies]
+                                   E-i energies
+                                   :let [V-transition-vec (when transition-form-factor-fn
+                                                            (mapv (fn [i] (transition-form-factor-fn (* i h) lambda beta ws)) (range n-points)))
+                                         T-amplitudes (when (and V-transition-vec inelastic-amplitude-radial-fn)
+                                                        (into {}
+                                                              (for [L-i L-values]
+                                                                (let [chi-i (entrance-wave E-i L-i)
+                                                                      chi-f (exit-wave E-i L-i)
+                                                                      T-radial (inelastic-amplitude-radial-fn chi-i chi-f V-transition-vec r-max h)
+                                                                      T-L (if (number? T-radial) (* angular-factor T-radial) (c/mul angular-factor T-radial))]
+                                                                  [L-i T-L]))))]
+                                   theta-deg angles-deg]
                                (try
-                                 (let [V-transition-vec (when transition-form-factor-fn
-                                                          (mapv (fn [i] (transition-form-factor-fn (* i h) lambda beta ws)) (range n-points)))
-                                       T-sum (if (and V-transition-vec inelastic-amplitude-radial-fn)
-                                               (reduce (fn [acc L-i]
-                                                         (let [chi-i (entrance-wave E-i L-i)
-                                                               chi-f (exit-wave E-i L-i)
-                                                               T-radial (inelastic-amplitude-radial-fn chi-i chi-f V-transition-vec r-max h)
-                                                               T-L (if (number? T-radial) (* angular-factor T-radial) (c/mul angular-factor T-radial))]
-                                                           (c/add acc (if (number? T-L) (c/complex-cartesian T-L 0.0) T-L))))
-                                                       zero-complex
-                                                       L-values)
-                                               nil)
-                                       dsigma-mb-sr (if T-sum
-                                                      (let [k-i (Math/sqrt (* mass-factor E-i))
-                                                            E-f (- E-i E-ex)
-                                                            k-f (Math/sqrt (* mass-factor E-f))]
-                                                        (inelastic-dsigma-fn T-sum k-i k-f E-i E-ex mass-factor))
-                                                      (reduce + 0.0 (for [L-i L-values]
-                                                                      (inel-cross (entrance-wave E-i L-i) (exit-wave E-i L-i)
-                                                                                  lambda mu beta ws E-i E-ex r-max h mass-factor))))]
-                                   {:energy E-i :lambda lambda :excitation_energy E-ex :differential_cross_section (double dsigma-mb-sr)})
-                                 (catch Exception e {:energy E-i :lambda lambda :excitation_energy E-ex :differential_cross_section 0.0 :error (.getMessage e)})))]
+                                 (let [theta-rad (* (double theta-deg) (/ Math/PI 180.0))
+                                       dsigma-mb-sr
+                                       (if (and T-amplitudes inelastic-dsigma-angular-fn)
+                                         (let [k-i (Math/sqrt (* mass-factor E-i))
+                                               E-f (- E-i E-ex)
+                                               k-f (Math/sqrt (* mass-factor E-f))]
+                                           (inelastic-dsigma-angular-fn T-amplitudes theta-rad k-i k-f E-i E-ex mass-factor))
+                                         (reduce + 0.0 (for [L-i L-values]
+                                                         (inel-cross (entrance-wave E-i L-i) (exit-wave E-i L-i)
+                                                                     lambda mu beta ws E-i E-ex r-max h mass-factor))))]
+                                   {:energy E-i
+                                    :angle (double theta-deg)
+                                    :lambda lambda
+                                    :excitation_energy E-ex
+                                    :differential_cross_section (double dsigma-mb-sr)})
+                                 (catch Exception e {:energy E-i :angle (double theta-deg) :lambda lambda :excitation_energy E-ex :differential_cross_section 0.0 :error (.getMessage e)})))]
           (response {:success true :data {:inelastic inelastic-data
                                           :parameters (merge {:energies energies :L_values L-values :lambdas lambdas :ws_params ws
                                                               :E_ex E-ex :beta beta :h h :r_max r-max
-                                                              :projectile projectile-str :inelastic_target target-str}
+                                                              :projectile projectile-str :inelastic_target target-str
+                                                              :angles_cm_deg angles-deg :inelastic_theta_step theta-step}
                                                              (when ws-w {:ws_w_params ws-w :inelastic_complex_optical true}))}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
