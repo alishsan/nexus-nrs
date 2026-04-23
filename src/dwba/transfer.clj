@@ -2615,7 +2615,7 @@
 (defn austern-radial-integral-I-zr-eq-5-5-from-u
   "Convenience: **(5.5)** with ZR integrand **F f_{αL} f_{βL} r²** (`**f-alphaL**`, **`f-betaL`**) when
   **F_{ℓsj}** is already on a vector (**one** **L_α**, **one** **L_β** partial wave per **u_α**, **u_β**).
-  To build **F** from bound states automatically, use **`austern-radial-integral-I-eq-5-5-from-F-lsj`**."
+  To build **F** from bound states automatically, use **`austern-radial-integral-I-eq-5-5-from-F-lsj`** (handbook **R_n** by default)."
   [F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
   (let [integrand (austern-radial-integrand-zr-F-Ra-Rb-r2
                     F-vec u-alpha u-beta (double h) (double zr-mass-ratio))]
@@ -2624,18 +2624,40 @@
 (defn austern-radial-integral-I-eq-5-5-from-F-lsj
   "Full **N. Austern**, **Eq. (5.5)** radial integral **I_{L_β L_α}^{ℓsj}** from bound + distorted **u** grids.
 
-  1. **F_{ℓsj}(r_i) = R_{φ_f}^* R_{φ_i}** — **`F-lsj-r-from-bound-reduced-u`** on **φ_i**, **φ_f** (reduced bound **u**, **E < 0**).
-  2. **f_{α L_α}(k_α, r)**, **f_{β L_β}(k_β, (M_A/M_B)r)** — **`f-alphaL`**, **`f-betaL`** inside **`austern-radial-integrand-zr-F-Ra-Rb-r2`**.
-  3. **(M_B/M_A)(4π/(k_α k_β)) ∫ dr F f_α f_β** (Simpson) — **`austern-radial-integral-I-Lb-La-eq-5-5`**.
-  
-  Uses **n = min(count φ_i, count φ_f, count u_α, count u_β)** samples via the shared integrand; align grids.
-  **k_α**, **k_β** (**fm⁻¹**). **zr-mass-ratio** = **M_A/M_B** (`**austern-zr-chi-exit-mass-ratio**`).
-  
-  Equivalent to **`(austern-radial-integral-I-zr-eq-5-5-from-u (F-lsj-r-from-bound-reduced-u φ_i φ_f h) u_α u_β …)`**."
-  [phi-i-reduced-u phi-f-reduced-u u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
-  (let [F-vec (F-lsj-r-from-bound-reduced-u phi-i-reduced-u phi-f-reduced-u h)]
-    (austern-radial-integral-I-zr-eq-5-5-from-u
-      F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio)))
+  **Default — handbook / LNPS §5.4 (same as `transfer-amplitude-post`):**
+  **F_{ℓsj}(r) = R_n(r)** via **`handbook-F-lsj-radial-from-neutron-bound-u`** on the nucleon bound **u** selected by
+  **`:handbook-F-from`** in **opts** — **`:phi-i`** (default, e.g. **(p,d)** pickup) or **`:phi-f`** (e.g. **(d,p)**).
+  The other **φ** argument is ignored for **F** construction.
+
+  **Optional **`{:F-convention :austern-product}`**:** **F = R_{φ_f}^* R_{φ_i}** — **`F-lsj-r-from-bound-reduced-u`**
+  (explicit two-factor overlap; low-level benchmarks only).
+
+  Then: **f_{α L_α}**, **f_{β L_β}** — **`austern-radial-integrand-zr-F-Ra-Rb-r2`**;
+  **(M_B/M_A)(4π/(k_α k_β)) ∫ dr F f_α f_β** — **`austern-radial-integral-I-Lb-La-eq-5-5`**.
+
+  Uses **n = min(count u_nucleon, count u_α, count u_β)** (handbook) or **min(count φ_i, count φ_f, …)** (Austern product).
+  **k_α**, **k_β** (**fm⁻¹**). **zr-mass-ratio** = **M_A/M_B** (`**austern-zr-chi-exit-mass-ratio`**)."
+  ([phi-i-reduced-u phi-f-reduced-u u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio]
+   (austern-radial-integral-I-eq-5-5-from-F-lsj
+     phi-i-reduced-u phi-f-reduced-u u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio {}))
+  ([phi-i-reduced-u phi-f-reduced-u u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio opts]
+   (let [F-vec (case (or (:F-convention opts) :handbook)
+                 :austern-product
+                 (F-lsj-r-from-bound-reduced-u phi-i-reduced-u phi-f-reduced-u h)
+                 :handbook
+                 (let [nucleon-u (case (or (:handbook-F-from opts) :phi-i)
+                                   :phi-i phi-i-reduced-u
+                                   :phi-f phi-f-reduced-u
+                                   (throw (IllegalArgumentException.
+                                           (format (str "austern-radial-integral-I-eq-5-5-from-F-lsj: "
+                                                        ":handbook-F-from must be :phi-i or :phi-f, got %s")
+                                                   (pr-str (:handbook-F-from opts))))))]
+                   (handbook-F-lsj-radial-from-neutron-bound-u nucleon-u h))
+                 (throw (IllegalArgumentException.
+                         (format (str "austern-radial-integral-I-eq-5-5-from-F-lsj: unknown :F-convention %s")
+                                 (pr-str (:F-convention opts))))))]
+     (austern-radial-integral-I-zr-eq-5-5-from-u
+       F-vec u-alpha u-beta h M-A M-B k-alpha k-beta zr-mass-ratio))))
 
 ;; -----------------------------------------------------------------------------
 ;; **Handbook** single-nucleon **F** (§5.4): **F_{ℓsj} = R_n = u/r** on **`austern-radial-integrand-zr-F-Ra-Rb-r2`**.

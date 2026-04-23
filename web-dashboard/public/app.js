@@ -1,5 +1,11 @@
 // DWBA Web Dashboard JavaScript
 
+/** Default channel partial waves for Numerov/phase, total σ (cross-section tab), inelastic, elastic metadata. */
+const DEFAULT_CHANNEL_L = '0,1,2,3,4,5';
+
+/** Default lab energies (MeV) for Phase Shifts and R-Matrices tabs only. */
+const DEFAULT_PHASE_RMATRIX_ENERGIES = '4,8,12,16,20';
+
 /** Plotly: smooth curves between samples (cubic spline). `smoothing` in [0, 1.3]; moderate value limits overshoot on oscillatory DCS. */
 const PLOTLY_SPLINE_LINE = { shape: 'spline', smoothing: 0.65 };
 
@@ -303,8 +309,15 @@ class DWBADashboard {
         document.getElementById('R0').value = params.R0;
         document.getElementById('a0').value = params.a0;
         document.getElementById('radius').value = params.radius;
-        document.getElementById('energy-range').value = Array.isArray(params.energies) ? params.energies.join(',') : (params.energies ?? '');
-        document.getElementById('L-values').value = Array.isArray(params.L_values) ? params.L_values.join(',') : (params.L_values ?? '');
+        const eVal = Array.isArray(params.energies) ? params.energies.join(',') : (params.energies ?? '50');
+        const lVal = Array.isArray(params.L_values) ? params.L_values.join(',') : (params.L_values ?? DEFAULT_CHANNEL_L);
+        const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+        const phaseE = Array.isArray(params.phase_energies) ? params.phase_energies.join(',') : (params.phase_energies != null ? String(params.phase_energies) : DEFAULT_PHASE_RMATRIX_ENERGIES);
+        const rmatE = Array.isArray(params.rmatrix_energies) ? params.rmatrix_energies.join(',') : (params.rmatrix_energies != null ? String(params.rmatrix_energies) : DEFAULT_PHASE_RMATRIX_ENERGIES);
+        setVal('phase-energy-range', phaseE);
+        setVal('rmatrix-energy-range', rmatE);
+        ['potential-energy-range', 'dashboard-energy-range', 'cross-section-energy-range', 'elastic-lab-energies', 'inelastic-beam-energies'].forEach(id => setVal(id, eVal));
+        ['phase-L-values', 'rmatrix-L-values', 'potential-L-values', 'dashboard-L-values'].forEach(id => setVal(id, lVal));
         
         if (params.E_ex !== undefined) document.getElementById('E_ex').value = params.E_ex;
         if (params.lambdas !== undefined) document.getElementById('lambda').value = Array.isArray(params.lambdas) ? params.lambdas.join(',') : String(params.lambdas);
@@ -363,6 +376,42 @@ class DWBADashboard {
         }
     }
 
+    /**
+     * Which **E** and **L** inputs to use for `/api/calculate` (phase, R-matrix, potential, total σ, dashboard).
+     * Cross-section tab has **energy only** in the UI; **L** defaults to {@link DEFAULT_CHANNEL_L} for the server sum.
+     * @param {'phase'|'rmatrix'|'potential'|'cross'|'dashboard'} tabKey
+     */
+    getCoreEnergiesL(tabKey) {
+        const defaultE = '50';
+        const pairs = {
+            phase: ['phase-energy-range', 'phase-L-values'],
+            rmatrix: ['rmatrix-energy-range', 'rmatrix-L-values'],
+            potential: ['potential-energy-range', 'potential-L-values'],
+            cross: ['cross-section-energy-range', null],
+            dashboard: ['dashboard-energy-range', 'dashboard-L-values'],
+        };
+        const [eId, lId] = pairs[tabKey] || pairs.phase;
+        const rawE = ((document.getElementById(eId) || {}).value || '').trim();
+        const fallbackE = (tabKey === 'phase' || tabKey === 'rmatrix') ? DEFAULT_PHASE_RMATRIX_ENERGIES : defaultE;
+        const eStr = rawE || fallbackE;
+        const lStr = lId
+            ? (((document.getElementById(lId) || {}).value || '').trim() || DEFAULT_CHANNEL_L)
+            : DEFAULT_CHANNEL_L;
+        return { energies: eStr, L_values: lStr };
+    }
+
+    /** Map Calculate button id → tab key for {@link getCoreEnergiesL}. */
+    coreTabKeyFromButton(btnId) {
+        const m = {
+            'calculate-phase-btn': 'phase',
+            'calculate-rmatrix-btn': 'rmatrix',
+            'calculate-potential-btn': 'potential',
+            'calculate-cross-section-btn': 'cross',
+            'calculate-dashboard-btn': 'dashboard',
+        };
+        return m[btnId] || 'phase';
+    }
+
     getParameters() {
         const num = (id, fallback) => {
             const el = document.getElementById(id);
@@ -374,25 +423,16 @@ class DWBADashboard {
             const v = el ? parseInt(el.value, 10) : NaN;
             return (v !== undefined && !Number.isNaN(v)) ? v : fallback;
         };
-        const energyRangeEl = document.getElementById('energy-range');
-        const lValuesEl = document.getElementById('L-values');
-        // Match backend **default-energies** (α + ¹⁴⁸Sm preset: E_lab = 50 MeV)
-        const defaultEnergies = [50];
-        const defaultL = [0, 1, 2, 3, 4, 5];
-        let energies = (energyRangeEl && energyRangeEl.value || '')
-            .split(',').map(s => s.trim()).filter(s => s.length > 0);
-        let L_values = (lValuesEl && lValuesEl.value || '')
-            .split(',').map(s => s.trim()).filter(s => s.length > 0);
-        if (energies.length === 0) energies = defaultEnergies.map(String);
-        if (L_values.length === 0) L_values = defaultL.map(String);
+        // Default **phase** tab fields — used for generic API payloads; per-tab `getCoreEnergiesL` overrides for /api/calculate
+        const phaseE = (document.getElementById('phase-energy-range') || {}).value || DEFAULT_PHASE_RMATRIX_ENERGIES;
+        const phaseL = (document.getElementById('phase-L-values') || {}).value || DEFAULT_CHANNEL_L;
         return {
             V0: num('V0', 65),
             R0: num('R0', 7.5),
             a0: num('a0', 0.67),
             radius: num('radius', 100),
-            // Send energies and L_values as comma-separated strings so backend always gets current values
-            energies: Array.isArray(energies) ? energies.join(',') : String(energies),
-            L_values: Array.isArray(L_values) ? L_values.join(',') : String(L_values),
+            energies: String(phaseE).trim() || DEFAULT_PHASE_RMATRIX_ENERGIES,
+            L_values: String(phaseL).trim() || DEFAULT_CHANNEL_L,
             E_ex: num('E_ex', 4.44),
             lambda: int('lambda', 2),
             lambdas: (document.getElementById('lambda') || {}).value || '2',  // e.g. "2" or "2,3,4" for multiple multipoles
@@ -456,13 +496,19 @@ class DWBADashboard {
     }
 
     async _runCoreCalculation(btnId) {
-        const params = this.getParameters();
-        const energiesStr = String(params.energies ?? '').trim();
-        const LValuesStr = String(params.L_values ?? '').trim();
-        if (!energiesStr || !LValuesStr) {
-            this.showStatus('Please provide valid energy range and angular momenta', 'error');
+        const tabKey = this.coreTabKeyFromButton(btnId);
+        const { energies, L_values } = this.getCoreEnergiesL(tabKey);
+        const energiesStr = String(energies ?? '').trim();
+        const LValuesStr = String(L_values ?? '').trim();
+        if (!energiesStr) {
+            this.showStatus('Please set an energy range (MeV) on this tab.', 'error');
             return;
         }
+        if (tabKey !== 'cross' && !LValuesStr) {
+            this.showStatus('Please set channel partial waves L on this tab.', 'error');
+            return;
+        }
+        const params = { ...this.getParameters(), energies: energiesStr, L_values: LValuesStr };
         this._setButtonLoading(btnId, true);
         this.showStatus('Calculating...', 'info');
         const startTime = Date.now();
@@ -474,7 +520,7 @@ class DWBADashboard {
             const n = (this.currentData.phase_shifts || []).length;
             console.log('Core calculation OK, data keys:', Object.keys(this.currentData), 'phase_shifts count:', n);
             if (n === 0) {
-                this.showStatus('Calculation returned no data points. Check energy range and L-values.', 'error');
+                this.showStatus('Calculation returned no data points. Check energy range and L on this tab.', 'error');
                 return;
             }
             try {
@@ -543,17 +589,14 @@ class DWBADashboard {
     async calculateCrossSections() { await this._runCoreCalculation('calculate-cross-section-btn'); }
     async calculateDashboard() { await this._runCoreCalculation('calculate-dashboard-btn'); }
     async calculateElastic() {
-        const energyRangeEl = document.getElementById('energy-range');
-        const lValuesEl = document.getElementById('L-values');
-        const energiesStr = (energyRangeEl && energyRangeEl.value || '').trim();
-        const LValuesStr = (lValuesEl && lValuesEl.value || '').trim();
+        const energyEl = document.getElementById('elastic-lab-energies');
+        const energiesStr = (energyEl && energyEl.value || '').trim();
         if (!energiesStr) {
-            this.showStatus('Please provide a valid energy range', 'error');
+            this.showStatus('Please set lab energies (MeV) on the Elastic tab.', 'error');
             return;
         }
-        // elastic_dsigma_L_max: nuclear partial-wave cutoff (see Elastic tab); L_values is still for API consistency.
         const params = this.getParameters();
-        const body = { ...params, energies: energiesStr, L_values: LValuesStr || '0,1,2,3,4,5' };
+        const body = { ...params, energies: energiesStr, L_values: DEFAULT_CHANNEL_L };
         
         // Debug: log what we're sending
         console.log('Elastic calculation - sending energies:', energiesStr);
@@ -607,22 +650,16 @@ class DWBADashboard {
         const li11Models = new Set(['li11_paper1708', 'li11', 'tanaka2017', 'paper1708']);
         const isLi11Paper = li11Models.has(model);
 
-        const energyRangeEl = document.getElementById('energy-range');
-        const lValuesEl = document.getElementById('L-values');
-        const energiesStr = (energyRangeEl && energyRangeEl.value || '').trim();
-        const LValuesStr = (lValuesEl && lValuesEl.value || '').trim();
+        const energyInel = document.getElementById('inelastic-beam-energies');
+        const energiesStr = (energyInel && energyInel.value || '').trim();
 
         if (!energiesStr) {
-            this.showStatus('Please set Energy range (MeV). For ¹¹Li paper mode this is E_p,lab.', 'error');
-            return;
-        }
-        if (!isLi11Paper && !LValuesStr) {
-            this.showStatus('Please provide valid energy range and angular momenta', 'error');
+            this.showStatus('Please set beam energies (MeV) on the Inelastic tab. For ¹¹Li paper mode this is E_p,lab.', 'error');
             return;
         }
 
         const params = { ...this.getParameters(), energies: energiesStr };
-        params.L_values = isLi11Paper ? (LValuesStr || '0') : LValuesStr;
+        params.L_values = isLi11Paper ? '0' : DEFAULT_CHANNEL_L;
 
         this._setButtonLoading('calculate-inelastic-btn', true);
         this.showStatus('Calculating...', 'info');
@@ -652,11 +689,10 @@ class DWBADashboard {
     /** Transfer: prefer energies / L from this tab; fall back to main panel; default energy 20 MeV if both empty. */
     async calculateTransfer() {
         const tE = (document.getElementById('transfer_energies')?.value || '').trim();
-        const mainE = (document.getElementById('energy-range')?.value || '').trim();
+        const mainE = (document.getElementById('phase-energy-range')?.value || '').trim();
         const energiesStr = tE || mainE || '20';
         const tL = (document.getElementById('transfer_L_values')?.value || '').trim();
-        const mainL = (document.getElementById('L-values')?.value || '').trim();
-        const LValuesStr = tL || mainL || '1';
+        const LValuesStr = tL || '1';
         const params = { ...this.getParameters(), energies: energiesStr, L_values: LValuesStr };
         if (tE) params.transfer_energies = tE;
 
@@ -987,10 +1023,10 @@ class DWBADashboard {
         const canRatio = ratioMode && z1 * z2 > 0;
         const ratioUnavailable = ratioMode && z1 * z2 <= 0;
 
-        // Get current energy range from form to filter data
-        const energyRangeEl = document.getElementById('energy-range');
-        const requestedEnergies = energyRangeEl && energyRangeEl.value 
-            ? energyRangeEl.value.split(',').map(e => parseFloat(e.trim())).filter(e => !isNaN(e))
+        // Get current lab energies from Elastic tab to filter data
+        const energyEl = document.getElementById('elastic-lab-energies');
+        const requestedEnergies = energyEl && energyEl.value
+            ? energyEl.value.split(',').map(e => parseFloat(e.trim())).filter(e => !isNaN(e))
             : null;
 
         const traces = {};

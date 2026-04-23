@@ -850,20 +850,35 @@
       (is (< (Math/abs (- (as-double (get fbh i)) expect)) 1e-12)))))
 
 (deftest austern-radial-integral-I-eq-5-5-from-F-lsj-test
-  "**austern-radial-integral-I-eq-5-5-from-F-lsj** matches **F-lsj** + **austern-radial-integral-I-zr-eq-5-5-from-u**."
-  (let [h 0.05
-        n 30
-        phi-i (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
-        phi-f (mapv (fn [i] (let [r (* (double i) h)] (* 0.5 r r))) (range n))
-        ua (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
-        ub ua
-        M-A 40.0 M-B 41.0 k-a 0.8 k-b 0.9
-        rho (t/austern-zr-chi-exit-mass-ratio M-A M-B)
-        F (t/F-lsj-r-from-bound-reduced-u phi-i phi-f h)
-        I-explicit (t/austern-radial-integral-I-zr-eq-5-5-from-u F ua ub h M-A M-B k-a k-b rho)
-        I-combo (t/austern-radial-integral-I-eq-5-5-from-F-lsj phi-i phi-f ua ub h M-A M-B k-a k-b rho)]
-    (is (Double/isFinite I-explicit))
-    (is (< (Math/abs (- I-explicit I-combo)) 1e-10))))
+  (testing "default: handbook R_n from φ_i matches explicit handbook-F + I-zr"
+    (let [h 0.05
+          n 30
+          phi-i (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+          phi-f (mapv (fn [i] (let [r (* (double i) h)] (* 0.5 r r))) (range n))
+          ua (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+          ub ua
+          M-A 40.0 M-B 41.0 k-a 0.8 k-b 0.9
+          rho (t/austern-zr-chi-exit-mass-ratio M-A M-B)
+          F-h (t/handbook-F-lsj-radial-from-neutron-bound-u phi-i h)
+          I-explicit (t/austern-radial-integral-I-zr-eq-5-5-from-u F-h ua ub h M-A M-B k-a k-b rho)
+          I-combo (t/austern-radial-integral-I-eq-5-5-from-F-lsj phi-i phi-f ua ub h M-A M-B k-a k-b rho)]
+      (is (Double/isFinite I-explicit))
+      (is (< (Math/abs (- I-explicit I-combo)) 1e-10))))
+  (testing ":F-convention :austern-product matches two-factor F-lsj + I-zr"
+    (let [h 0.05
+          n 30
+          phi-i (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+          phi-f (mapv (fn [i] (let [r (* (double i) h)] (* 0.5 r r))) (range n))
+          ua (mapv (fn [i] (let [r (* (double i) h)] (* r r))) (range n))
+          ub ua
+          M-A 40.0 M-B 41.0 k-a 0.8 k-b 0.9
+          rho (t/austern-zr-chi-exit-mass-ratio M-A M-B)
+          F (t/F-lsj-r-from-bound-reduced-u phi-i phi-f h)
+          I-explicit (t/austern-radial-integral-I-zr-eq-5-5-from-u F ua ub h M-A M-B k-a k-b rho)
+          I-combo (t/austern-radial-integral-I-eq-5-5-from-F-lsj phi-i phi-f ua ub h M-A M-B k-a k-b rho
+                                {:F-convention :austern-product})]
+      (is (Double/isFinite I-explicit))
+      (is (< (Math/abs (- I-explicit I-combo)) 1e-10)))))
 
 (deftest handbook-radial-integral-I-zr-matches-austern-eq-5-5-test
   "Same **F**, **u** grids: **`handbook-radial-integral-I-zr`** uses **(5.5)** prefactor — equals **`austern-radial-integral-I-zr-eq-5-5-from-u`**."

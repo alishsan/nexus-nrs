@@ -837,6 +837,9 @@
     (GET "/js/dashboard.js" [] (serve-resource "js/dashboard.js"))
     (GET "/api/health" [] (response {:status "ok" :message "DWBA Web Dashboard API"}))
     (GET "/api/parameters" [] (response {:default_parameters {:energies [50.0] :L_values [0 1 2 3 4 5]
+                                                               ;; Phase / R-matrix tabs (dashboard UI)
+                                                               :phase_energies [4.0 8.0 12.0 16.0 20.0]
+                                                               :rmatrix_energies [4.0 8.0 12.0 16.0 20.0]
                                                                :V0 65.0 :R0 7.5 :a0 0.67 :radius 100.0
                                                                :elastic_projectile "a"
                                                                :elastic_target "148Sm"

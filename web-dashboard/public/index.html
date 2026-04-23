@@ -214,24 +214,8 @@
                         </div>
                     </div>
                 </div>
-                <div class="row mt-3">
-                    <div class="col-md-6">
-                        <div class="parameter-group">
-                            <label for="energy-range">Energy Range (MeV)</label>
-                            <input type="text" class="form-control" id="energy-range" value="50" 
-                                   placeholder="Comma-separated values">
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="parameter-group">
-                            <label for="L-values">Angular momenta <em>L</em> (channel partial waves)</label>
-                            <input type="text" class="form-control" id="L-values" value="0,1,2,3,4,5" 
-                                   placeholder="Comma-separated values">
-                            <small class="text-muted">For phase shift, R-matrix, inelastic — not orbital ℓ on the Transfer tab.</small>
-                        </div>
-                    </div>
-                </div>
-                
+                <p class="text-muted small mb-0">Energy ranges and channel partial waves <em>L</em> are on each tab: <strong>Phase Shifts</strong>, <strong>R-Matrices</strong>, and <strong>Potentials</strong> (E + L). <strong>Cross-Sections</strong>, <strong>Elastic</strong>, and <strong>Inelastic</strong> use lab energies on those tabs only (no <em>L</em> for σ or dσ).</p>
+
                 <div class="text-center mt-4">
                     <button class="btn btn-outline-secondary" id="reset-btn" type="button">
                         <i class="fas fa-undo"></i> Reset
@@ -289,6 +273,23 @@
             <div class="tab-content" id="results-content">
                 <!-- Phase Shifts Panel -->
                 <div class="tab-pane fade show active" id="phase-panel" role="tabpanel">
+                    <div class="control-panel mb-3">
+                        <h5 class="mb-3">Energies &amp; partial waves</h5>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="phase-energy-range">Energy range (MeV, lab)</label>
+                                    <input type="text" class="form-control" id="phase-energy-range" value="4,8,12,16,20" placeholder="e.g. 4,8,12,16,20">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="phase-L-values">Channel <em>L</em> (partial waves)</label>
+                                    <input type="text" class="form-control" id="phase-L-values" value="0,1,2,3,4,5" placeholder="Comma-separated">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <button class="btn btn-calculate" id="calculate-phase-btn" type="button">
                             <i class="fas fa-calculator"></i> Calculate
@@ -302,6 +303,23 @@
 
                 <!-- R-Matrices Panel -->
                 <div class="tab-pane fade" id="rmatrix-panel" role="tabpanel">
+                    <div class="control-panel mb-3">
+                        <h5 class="mb-3">Energies &amp; partial waves</h5>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="rmatrix-energy-range">Energy range (MeV, lab)</label>
+                                    <input type="text" class="form-control" id="rmatrix-energy-range" value="4,8,12,16,20" placeholder="e.g. 4,8,12,16,20">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="rmatrix-L-values">Channel <em>L</em> (partial waves)</label>
+                                    <input type="text" class="form-control" id="rmatrix-L-values" value="0,1,2,3,4,5" placeholder="Comma-separated">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <button class="btn btn-calculate" id="calculate-rmatrix-btn" type="button">
                             <i class="fas fa-calculator"></i> Calculate
@@ -315,6 +333,24 @@
 
                 <!-- Potentials Panel -->
                 <div class="tab-pane fade" id="potential-panel" role="tabpanel">
+                    <div class="control-panel mb-3">
+                        <h5 class="mb-3">Energies &amp; partial waves</h5>
+                        <p class="small text-muted">Potentials vs <em>r</em> do not depend on E or L; this grid is used for the same Numerov/phase run as the other two tabs below.</p>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="potential-energy-range">Energy range (MeV, lab)</label>
+                                    <input type="text" class="form-control" id="potential-energy-range" value="50" placeholder="e.g. 30,50,70">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="potential-L-values">Channel <em>L</em> (partial waves)</label>
+                                    <input type="text" class="form-control" id="potential-L-values" value="0,1,2,3,4,5" placeholder="Comma-separated">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <button class="btn btn-calculate" id="calculate-potential-btn" type="button">
                             <i class="fas fa-calculator"></i> Calculate
@@ -328,6 +364,18 @@
 
                 <!-- Cross-Sections Panel -->
                 <div class="tab-pane fade" id="cross-section-panel" role="tabpanel">
+                    <div class="control-panel mb-3">
+                        <h5 class="mb-3">Energies</h5>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="cross-section-energy-range">Energy range (MeV, lab)</label>
+                                    <input type="text" class="form-control" id="cross-section-energy-range" value="50" placeholder="e.g. 30,50,70">
+                                </div>
+                            </div>
+                        </div>
+                        <p class="small text-muted mb-0">Total cross section uses the same E grid; the sum over <em>L</em> in the model uses a fixed default set (0–5) in the server — not edited here.</p>
+                    </div>
                     <div class="mb-3">
                         <button class="btn btn-calculate" id="calculate-cross-section-btn" type="button">
                             <i class="fas fa-calculator"></i> Calculate
@@ -347,8 +395,17 @@
                             Computes single-channel elastic scattering for a chosen projectile + target, using the Woods–Saxon parameters above
                             as the effective optical potential for that system.
                             Default preset matches <strong>α + ¹⁴⁸Sm</strong> at <strong>E<sub>lab</sub> = 50</strong> MeV (real <strong>[65, 7.5, 0.67]</strong> MeV/fm + imaginary volume WS <strong>W₀ = 30</strong> MeV via <code>*elastic-imag-ws-params*</code>).
-                            Elastic dσ sums nuclear partial waves <strong>L = 0 … L<sub>max</sub></strong> (default 41). Large <em>L</em><sub>max</sub> with a strong real well plus Coulomb can inflate <strong>f<sub>N</sub></strong> numerically (e.g. p+¹⁶O dσ/σ<sub>Ruth</sub> ≫ 10³); use <strong>V0=R0=0</strong> to verify ratio ≡ 1. The main <strong>Angular momenta</strong> field is for <em>phase shift / R-matrix / inelastic</em> only.
+                            Elastic dσ sums nuclear partial waves <strong>L = 0 … L<sub>max</sub></strong> (default 41). Large <em>L</em><sub>max</sub> with a strong real well plus Coulomb can inflate <strong>f<sub>N</sub></strong> numerically (e.g. p+¹⁶O dσ/σ<sub>Ruth</sub> ≫ 10³); use <strong>V0=R0=0</strong> to verify ratio ≡ 1.
                         </p>
+                        <div class="row mb-2">
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="elastic-lab-energies">Lab energies (MeV)</label>
+                                    <input type="text" class="form-control" id="elastic-lab-energies" value="50" placeholder="Comma-separated, e.g. 30,50,70">
+                                    <small class="text-muted">Projectile kinetic in the lab; one curve per energy.</small>
+                                </div>
+                            </div>
+                        </div>
                         <div class="row mb-3">
                             <div class="col-md-4">
                                 <div class="parameter-group">
@@ -440,12 +497,21 @@
                     <div class="control-panel mb-3">
                         <h4><i class="fas fa-exchange-alt"></i> Inelastic Scattering Parameters</h4>
                         <p class="text-muted small mb-2">Projectile + target define the reaction (e.g. p + ¹²C). Target sets typical E_ex and β (λ=2). Real Woods–Saxon <strong>V₀, R₀, a₀</strong> and optional imaginary volume WS <strong>W₀, R_W, a_W</strong> on the <strong>Elastic</strong> tab are passed into <code>dwba.inelastic/distorted-wave-entrance</code> and <code>distorted-wave-exit</code> (same <code>optical-potential-woods-saxon</code> path as elastic dσ).</p>
+                        <div class="row mb-2">
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="inelastic-beam-energies">Beam energies (MeV, lab)</label>
+                                    <input type="text" class="form-control" id="inelastic-beam-energies" value="50" placeholder="e.g. 20,30,50">
+                                    <small class="text-muted">For standard macroscopic inelastic, channel partial waves use a default <em>L</em> set in the server.</small>
+                                </div>
+                            </div>
+                        </div>
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="parameter-group">
                                     <label for="inelastic_model">Model</label>
                                     <select class="form-select" id="inelastic_model">
-                                        <option value="standard" selected>Standard — macroscopic (p,p′) DWBA (main panel L, λ, β)</option>
+                                        <option value="standard" selected>Standard — macroscopic (p,p′) DWBA (λ, β; default channel <em>L</em> in API)</option>
                                         <option value="li11_paper1708">¹¹Li (p,p′) — Tanaka et al. (1708.07719), Table 1 optics</option>
                                         <option value="tanaka2017">Same as above (alias: Tanaka 2017 / arXiv:1708.07719)</option>
                                     </select>
@@ -600,7 +666,7 @@
                                 <p class="text-muted small mb-2">Generic preset uses approximate masses (931.494 MeV/c² per nucleon), **Q**, and placeholder separation energies for the bound-state well. **(d,p)** stripping curve is still the ¹⁶O benchmark.</p>
                             </div>
                         </div>
-                        <p class="text-muted small mb-0">Use the boxes below for transfer-specific kinematics, bound-state well, optical (imaginary) terms, and radial mesh. <strong>ℓ</strong> denotes orbital multipoles in the reduced <em>T<sub>ℓ</sub></em> coupling (not distorted-wave <em>L</em><sub>α</sub> sums). Leave energies blank on this tab to use the main <strong>Energy range</strong> field.</p>
+                        <p class="text-muted small mb-0">Use the boxes below for transfer-specific kinematics, bound-state well, optical (imaginary) terms, and radial mesh. <strong>ℓ</strong> denotes orbital multipoles in the reduced <em>T<sub>ℓ</sub></em> coupling (not distorted-wave <em>L</em><sub>α</sub> sums). Leave <strong>Beam energies</strong> blank to use the <strong>Phase Shifts</strong> tab energy list.</p>
                     </div>
 
                     <div class="row g-3 mb-3">
@@ -739,6 +805,23 @@
 
                 <!-- Dashboard Panel -->
                 <div class="tab-pane fade" id="dashboard-panel" role="tabpanel">
+                    <div class="control-panel mb-3">
+                        <h5 class="mb-3">Energies &amp; partial waves (same as Phase / R-matrix / Potential)</h5>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="dashboard-energy-range">Energy range (MeV, lab)</label>
+                                    <input type="text" class="form-control" id="dashboard-energy-range" value="50" placeholder="e.g. 30,50,70">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="parameter-group">
+                                    <label for="dashboard-L-values">Channel <em>L</em> (partial waves)</label>
+                                    <input type="text" class="form-control" id="dashboard-L-values" value="0,1,2,3,4,5" placeholder="Comma-separated">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <button class="btn btn-calculate" id="calculate-dashboard-btn" type="button">
                             <i class="fas fa-calculator"></i> Calculate
