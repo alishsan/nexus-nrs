@@ -315,6 +315,9 @@
       (generic-transfer-target (:transfer_target_A extra) (:transfer_target_Z extra))
       (or (get transfer-targets k) (get transfer-targets "16O")))))
 
+(defn- param-has-any? [params keyvec]
+  (boolean (some #(contains? params %) keyvec)))
+
 (defn- ws-params-from [params]
   [(parse-double-default (:V0 params) 40.0)
    (parse-double-default (:R0 params) 2.0)
@@ -328,14 +331,6 @@
     (when (and (number? W0) (> W0 0.0))
       [W0 R-W a-W])))
 
-(defn- transfer-ws-from [params]
-  "Woods–Saxon [V0 R0 a0] for transfer bound states. transfer_V0 / transfer_R0 / transfer_a0
-  override main panel V0/R0/a0 when sent (defaults fall back to global ws-params-from)."
-  (let [base (ws-params-from params)]
-    [(parse-double-default (:transfer_V0 params) (nth base 0))
-     (parse-double-default (:transfer_R0 params) (nth base 1))
-     (parse-double-default (:transfer_a0 params) (nth base 2))]))
-
 (defn- transfer-energies-from [params]
   "If :transfer_energies is non-empty, return parsed MeV list; else nil (caller uses :energies)."
   (let [te (parse-doubles (:transfer_energies params))]
@@ -346,6 +341,75 @@
   {:W0 (parse-double-default (:transfer_W0 params) 0.0)
    :R_W (parse-double-default (:transfer_RW params) (parse-double-default (:R_W params) 2.0))
    :a_W (parse-double-default (:transfer_aW params) (parse-double-default (:a_W params) 0.6))})
+
+(defn- transfer-ws-entrance [params]
+  "Woods–Saxon [V0 R0 a0] for transfer entrance / initial bound channel."
+  (let [base (ws-params-from params)]
+    (if (param-has-any? params [:transfer_entrance_V0 :transfer_entrance_R0 :transfer_entrance_a0])
+      [(parse-double-default (:transfer_entrance_V0 params) (nth base 0))
+       (parse-double-default (:transfer_entrance_R0 params) (nth base 1))
+       (parse-double-default (:transfer_entrance_a0 params) (nth base 2))]
+      [(parse-double-default (:transfer_V0 params) (nth base 0))
+       (parse-double-default (:transfer_R0 params) (nth base 1))
+       (parse-double-default (:transfer_a0 params) (nth base 2))])))
+
+(defn- transfer-ws-exit [params ws-ent]
+  (if (param-has-any? params [:transfer_exit_V0 :transfer_exit_R0 :transfer_exit_a0])
+    [(parse-double-default (:transfer_exit_V0 params) (nth ws-ent 0))
+     (parse-double-default (:transfer_exit_R0 params) (nth ws-ent 1))
+     (parse-double-default (:transfer_exit_a0 params) (nth ws-ent 2))]
+    ws-ent))
+
+(defn- transfer-optical-imag-entrance [params]
+  (let [base (transfer-optical-imag-params params)]
+    (if (param-has-any? params [:transfer_entrance_W0 :transfer_entrance_RW :transfer_entrance_aW])
+      {:W0 (parse-double-default (:transfer_entrance_W0 params) (:W0 base))
+       :R_W (parse-double-default (:transfer_entrance_RW params) (:R_W base))
+       :a_W (parse-double-default (:transfer_entrance_aW params) (:a_W base))}
+      base)))
+
+(defn- transfer-optical-imag-exit [params ent]
+  (if (param-has-any? params [:transfer_exit_W0 :transfer_exit_RW :transfer_exit_aW])
+    {:W0 (parse-double-default (:transfer_exit_W0 params) (:W0 ent))
+     :R_W (parse-double-default (:transfer_exit_RW params) (:R_W ent))
+     :a_W (parse-double-default (:transfer_exit_aW params) (:a_W ent))}
+    ent))
+
+(defn- inelastic-ws-entrance [p]
+  (let [base (ws-params-from p)]
+    (if (param-has-any? p [:inelastic_entrance_V0 :inelastic_entrance_R0 :inelastic_entrance_a0])
+      [(parse-double-default (:inelastic_entrance_V0 p) (nth base 0))
+       (parse-double-default (:inelastic_entrance_R0 p) (nth base 1))
+       (parse-double-default (:inelastic_entrance_a0 p) (nth base 2))]
+      base)))
+
+(defn- inelastic-ws-exit [p ws-ent]
+  (if (param-has-any? p [:inelastic_exit_V0 :inelastic_exit_R0 :inelastic_exit_a0])
+    [(parse-double-default (:inelastic_exit_V0 p) (nth ws-ent 0))
+     (parse-double-default (:inelastic_exit_R0 p) (nth ws-ent 1))
+     (parse-double-default (:inelastic_exit_a0 p) (nth ws-ent 2))]
+    ws-ent))
+
+(defn- inelastic-w-w-entrance [p]
+  (let [base (ws-w-params-from p)]
+    (if (param-has-any? p [:inelastic_entrance_W0 :inelastic_entrance_RW :inelastic_entrance_aW])
+      (let [W0 (parse-double-default (:inelastic_entrance_W0 p) (if base (first base) 0.0))
+            rw-def (if base (second base) (parse-double-default (:R_W p) 2.0))
+            aw-def (if base (nth base 2) (parse-double-default (:a_W p) 0.6))
+            R-W (parse-double-default (:inelastic_entrance_RW p) rw-def)
+            a-W (parse-double-default (:inelastic_entrance_aW p) aw-def)]
+        (when (> W0 0.0) [W0 R-W a-W]))
+      base)))
+
+(defn- inelastic-w-w-exit [p w-ent]
+  (if (param-has-any? p [:inelastic_exit_W0 :inelastic_exit_RW :inelastic_exit_aW])
+    (let [W0 (parse-double-default (:inelastic_exit_W0 p) (if w-ent (first w-ent) 0.0))
+          rw-def (if w-ent (second w-ent) (parse-double-default (:R_W p) 2.0))
+          aw-def (if w-ent (nth w-ent 2) (parse-double-default (:a_W p) 0.6))
+          R-W (parse-double-default (:inelastic_exit_RW p) rw-def)
+          a-W (parse-double-default (:inelastic_exit_aW p) aw-def)]
+      (when (> W0 0.0) [W0 R-W a-W]))
+    w-ent))
 
 ;; Default lab energies (MeV): **α + ¹⁴⁸Sm** example (**E_lab = 50**); shared by elastic / phase-shift forms.
 (def ^:private default-energies [50.0])
@@ -566,9 +630,10 @@
           p (params req)
           [energies L-values] (ensure-energies-L (parse-doubles (:energies p)) (parse-ints (:L_values p)))
           lambdas (parse-lambdas p)
-          ws (ws-params-from p)
-          ;; Same volume imaginary WS as **Elastic** (`ws-w-params-from`); passed to **`optical-potential-woods-saxon`** via **`:W-params`**.
-          ws-w (ws-w-params-from p)
+          ws-ent (inelastic-ws-entrance p)
+          ws-ex (inelastic-ws-exit p ws-ent)
+          w-ent (inelastic-w-w-entrance p)
+          w-ex (inelastic-w-w-exit p w-ent)
           projectile-str (str (or (:projectile p) "p"))
           target-str (str (or (:inelastic_target p) "12C"))
           projectile-type (case projectile-str
@@ -606,8 +671,8 @@
           charged-inelastic? (#{:p :d :alpha} projectile-type)
           entrance-wave (fn [E-i L-i]
                           (cond
-                            (and ws charged-inelastic?)
-                            (apply inel E-i L-i ws h r-max
+                            (and ws-ent charged-inelastic?)
+                            (apply inel E-i L-i ws-ent h r-max
                                    (concat [:projectile-type projectile-type
                                             :target-A target-A
                                             :target-Z target-Z
@@ -615,9 +680,9 @@
                                             :s spin
                                             :j (+ L-i spin)
                                             :mass-factor mass-factor]
-                                           (when ws-w [:W-params ws-w])))
-                            ws
-                            (inel E-i L-i ws h r-max)
+                                           (when w-ent [:W-params w-ent])))
+                            ws-ent
+                            (inel E-i L-i ws-ent h r-max)
                             :else
                             (inel E-i L-i nil h r-max
                                   :projectile-type projectile-type
@@ -630,8 +695,8 @@
           exit-wave (fn [E-i L-i]
                       (let [E-lab-ex (max 0.001 (- E-i E-ex))]
                         (cond
-                          (and ws charged-inelastic?)
-                          (apply inel-exit E-i E-ex L-i ws h r-max
+                          (and ws-ex charged-inelastic?)
+                          (apply inel-exit E-i E-ex L-i ws-ex h r-max
                                  (concat [:outgoing-type projectile-type
                                           :residual-A target-A
                                           :residual-Z target-Z
@@ -639,9 +704,9 @@
                                           :s spin
                                           :j (+ L-i spin)
                                           :mass-factor mass-factor]
-                                         (when ws-w [:W-params ws-w])))
-                          ws
-                          (inel-exit E-i E-ex L-i ws h r-max)
+                                         (when w-ex [:W-params w-ex])))
+                          ws-ex
+                          (inel-exit E-i E-ex L-i ws-ex h r-max)
                           :else
                           (inel-exit E-i E-ex L-i nil h r-max
                                      :outgoing-type projectile-type
@@ -654,7 +719,7 @@
         (let [inelastic-data (for [lambda lambdas
                                    E-i energies
                                    :let [V-transition-vec (when transition-form-factor-fn
-                                                            (mapv (fn [i] (transition-form-factor-fn (* i h) lambda beta ws)) (range n-points)))
+                                                            (mapv (fn [i] (transition-form-factor-fn (* i h) lambda beta ws-ent)) (range n-points)))
                                          T-amplitudes (when (and V-transition-vec inelastic-amplitude-radial-fn)
                                                         (into {}
                                                               (for [L-i L-values]
@@ -674,7 +739,7 @@
                                            (inelastic-dsigma-angular-fn T-amplitudes theta-rad k-i k-f E-i E-ex mass-factor))
                                          (reduce + 0.0 (for [L-i L-values]
                                                          (inel-cross (entrance-wave E-i L-i) (exit-wave E-i L-i)
-                                                                     lambda mu beta ws E-i E-ex r-max h mass-factor))))]
+                                                                     lambda mu beta ws-ent E-i E-ex r-max h mass-factor))))]
                                    {:energy E-i
                                     :angle (double theta-deg)
                                     :lambda lambda
@@ -682,11 +747,14 @@
                                     :differential_cross_section (double dsigma-mb-sr)})
                                  (catch Exception e {:energy E-i :angle (double theta-deg) :lambda lambda :excitation_energy E-ex :differential_cross_section 0.0 :error (.getMessage e)})))]
           (response {:success true :data {:inelastic inelastic-data
-                                          :parameters (merge {:energies energies :L_values L-values :lambdas lambdas :ws_params ws
+                                          :parameters (merge {:energies energies :L_values L-values :lambdas lambdas
+                                                              :ws_params ws-ent :ws_params_exit ws-ex
                                                               :E_ex E-ex :beta beta :h h :r_max r-max
                                                               :projectile projectile-str :inelastic_target target-str
                                                               :angles_cm_deg angles-deg :inelastic_theta_step theta-step}
-                                                             (when ws-w {:ws_w_params ws-w :inelastic_complex_optical true}))}})))
+                                                             (when w-ent {:ws_w_params w-ent :inelastic_complex_optical true})
+                                                             (when (and w-ex (not= w-ex w-ent))
+                                                               {:ws_w_params_exit w-ex}))}})))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
 (defn- handle-api-inelastic [req]
@@ -737,8 +805,10 @@
       (if strip-d-p?
         (let [energy-list (or (transfer-energies-from p) (parse-doubles (:energies p)))
               [energies L-values] (ensure-energies-L energy-list (parse-ints (:L_values p)))
-              ws (transfer-ws-from p)
-              optical (transfer-optical-imag-params p)
+              ws-ent (transfer-ws-entrance p)
+              ws-ex (transfer-ws-exit p ws-ent)
+              optical-ent (transfer-optical-imag-entrance p)
+              optical-ex (transfer-optical-imag-exit p optical-ent)
               S-factor (parse-double-default (or (:transfer_S p) (:S_factor p)) 1.0)
               h (parse-double-default (:transfer_h p) 0.08)
               r-max (parse-double-default (:transfer_r_max p) 100.0)
@@ -750,14 +820,16 @@
                      (str "¹⁶O(d,p) stripping preset; request target was " target-str ". S_factor scales σ.; optics recorded for reference only."))]
           (response {:success true :data {:transfer transfer-data
                                           :parameters {:energies energies :L_values L-values
-                                                       :ws_params ws :bound_state_ws ws
+                                                       :ws_params ws-ent :ws_params_exit ws-ex
+                                                       :bound_state_ws ws-ent :bound_state_ws_exit ws-ex
                                                        :reaction_type "d-p"
                                                        :S_factor S-factor
                                                        :target target-str
                                                        :r_max r-max :h h :L_max L-max
                                                        :implementation transfer-implementation-16o-dp
                                                        :note note
-                                                       :optical_imaginary optical}}}))
+                                                       :optical_imaginary optical-ent
+                                                       :optical_imaginary_exit optical-ex}}}))
         (do
           (when-not (find-ns 'dwba.transfer) (require 'dwba.transfer))
           (when-not (find-ns 'dwba.form-factors) (require 'dwba.form-factors))
@@ -768,8 +840,10 @@
                 normalized-overlap (or (resolve 'dwba.form-factors/normalized-overlap) (do (require 'dwba.form-factors) (resolve 'dwba.form-factors/normalized-overlap)))
                 energy-list (or (transfer-energies-from p) (parse-doubles (:energies p)))
                 [energies L-values] (ensure-energies-L energy-list (parse-ints (:L_values p)))
-                ws (transfer-ws-from p)
-                optical (transfer-optical-imag-params p)
+                ws-ent (transfer-ws-entrance p)
+                ws-ex (transfer-ws-exit p ws-ent)
+                optical-ent (transfer-optical-imag-entrance p)
+                optical-ex (transfer-optical-imag-exit p optical-ent)
                 reaction-type (keyword (str (or (when-not (str/blank? (str (:reaction_type p))) (:reaction_type p)) "p-d")))
                 S-factor (parse-double-default (or (:transfer_S p) (:S_factor p)) 1.0)
                 mass-factor phys/mass-factor
@@ -778,8 +852,8 @@
                 l-i (parse-int-default (:transfer_l_i p) 1)
                 l-f (parse-int-default (:transfer_l_f p) 0)
                 L-partial (parse-int-default (:transfer_partial_L p) 1)
-                bound-i (solve-bound-state ws 1 l-i nil r-max h)
-                bound-f (solve-bound-state ws 1 l-f nil r-max h)
+                bound-i (solve-bound-state ws-ent 1 l-i nil r-max h)
+                bound-f (solve-bound-state ws-ex 1 l-f nil r-max h)
                 phi-i (:normalized-wavefunction bound-i)
                 phi-f (:normalized-wavefunction bound-f)
                 overlap-approx (normalized-overlap phi-i phi-f r-max h)
@@ -800,7 +874,8 @@
                                     (catch Exception e {:energy E-i :angle theta-deg :differential_cross_section 0.0 :error (.getMessage e)})))]
               (response {:success true :data {:transfer transfer-data
                                               :parameters {:energies energies :L_values L-values
-                                                           :ws_params ws :bound_state_ws ws
+                                                           :ws_params ws-ent :ws_params_exit ws-ex
+                                                           :bound_state_ws ws-ent :bound_state_ws_exit ws-ex
                                                            :reaction_type (str reaction-type)
                                                            :S_factor S-factor
                                                            :target (str (or (:target p) ""))
@@ -808,7 +883,8 @@
                                                            :transfer_l_i l-i :transfer_l_f l-f
                                                            :transfer_partial_L L-partial
                                                            :implementation "schematic zero-range + transfer-differential-cross-section-angular"
-                                                           :optical_imaginary optical}}}))))))
+                                                           :optical_imaginary optical-ent
+                                                           :optical_imaginary_exit optical-ex}}}))))))
     (catch Exception e (response {:success false :error (.getMessage e)}))))
 
 (defn- handle-transfer-default [req]
@@ -851,6 +927,8 @@
                                                                :li11_optical_set "V" :li11_beta_scale 1.0 :li11_L_max 22
                                                                :li11_r_max 45.0 :li11_h 0.02 :li11_theta_step 5.0 :li11_transfer_ell 1
                                                                :transfer_S 1.0 :transfer_partial_L 1 :transfer_l_i 1 :transfer_l_f 0
+                                                               :transfer_entrance_V0 40.0 :transfer_entrance_R0 2.0 :transfer_entrance_a0 0.6
+                                                               :transfer_entrance_W0 0.0 :transfer_entrance_RW 2.0 :transfer_entrance_aW 0.6
                                                                :transfer_r_max 100.0 :transfer_h 0.08
                                                                :transfer_L_max 18
                                                                :transfer_W0 0.0 :transfer_RW 2.0 :transfer_aW 0.6}

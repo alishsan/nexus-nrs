@@ -98,13 +98,42 @@ class DWBADashboard {
         ['V0', 'R0', 'a0', 'radius'].forEach(param => {
             const slider = document.getElementById(param);
             const valueDisplay = document.getElementById(`${param}-value`);
-            
+
             slider.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
                 const unit = param === 'V0' ? 'MeV' : 'fm';
                 valueDisplay.textContent = `${value} ${unit}`;
+                this.syncInelasticTabRealFromMainSliders();
             });
         });
+
+        ['inelastic_entrance_V0', 'inelastic_entrance_R0', 'inelastic_entrance_a0', 'inelastic_entrance_radius'].forEach(id => {
+            document.getElementById(id)?.addEventListener('input', () => this.pushInelasticTabRealToMainSliders());
+        });
+        this.syncInelasticTabRealFromMainSliders();
+
+        const syncInelasticExitPanel = () => {
+            const on = !!(document.getElementById('inelastic_exit_same_optical') || {}).checked;
+            const p = document.getElementById('inelastic-exit-optical-panel');
+            if (p) p.style.display = on ? 'none' : '';
+        };
+        document.getElementById('inelastic_exit_same_optical')?.addEventListener('change', syncInelasticExitPanel);
+        syncInelasticExitPanel();
+
+        const syncTransferExitBound = () => {
+            const on = !!(document.getElementById('transfer_exit_same_bound') || {}).checked;
+            const p = document.getElementById('transfer-exit-bound-panel');
+            if (p) p.style.display = on ? 'none' : '';
+        };
+        const syncTransferExitOptical = () => {
+            const on = !!(document.getElementById('transfer_exit_same_optical') || {}).checked;
+            const p = document.getElementById('transfer-exit-optical-panel');
+            if (p) p.style.display = on ? 'none' : '';
+        };
+        document.getElementById('transfer_exit_same_bound')?.addEventListener('change', syncTransferExitBound);
+        document.getElementById('transfer_exit_same_optical')?.addEventListener('change', syncTransferExitOptical);
+        syncTransferExitBound();
+        syncTransferExitOptical();
 
         // Reset button
         document.getElementById('reset-btn')?.addEventListener('click', () => {
@@ -238,6 +267,43 @@ class DWBADashboard {
         if (rowZ) rowZ.style.display = show ? '' : 'none';
     }
 
+    /** Copy main real-WS sliders into Inelastic-tab fields (aligned with getParameters /api/inelastic). */
+    syncInelasticTabRealFromMainSliders() {
+        const pairs = [['inelastic_entrance_V0', 'V0'], ['inelastic_entrance_R0', 'R0'], ['inelastic_entrance_a0', 'a0'], ['inelastic_entrance_radius', 'radius']];
+        pairs.forEach(([tid, sid]) => {
+            const t = document.getElementById(tid);
+            const s = document.getElementById(sid);
+            if (t && s && s.value !== '') t.value = s.value;
+        });
+    }
+
+    /** Push Inelastic-tab real-WS fields into main sliders (clamped) and refresh labels. */
+    pushInelasticTabRealToMainSliders() {
+        const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+        const specs = [
+            ['inelastic_entrance_V0', 'V0', 0, 100],
+            ['inelastic_entrance_R0', 'R0', 0.5, 10],
+            ['inelastic_entrance_a0', 'a0', 0.1, 2],
+            ['inelastic_entrance_radius', 'radius', 0, 300]
+        ];
+        for (let i = 0; i < specs.length; i++) {
+            const tid = specs[i][0];
+            const sid = specs[i][1];
+            const lo = specs[i][2];
+            const hi = specs[i][3];
+            const t = document.getElementById(tid);
+            const s = document.getElementById(sid);
+            const disp = document.getElementById(`${sid}-value`);
+            if (!t || !s) continue;
+            const raw = parseFloat(t.value);
+            if (Number.isNaN(raw)) continue;
+            const c = sid === 'radius' ? Math.round(clamp(raw, lo, hi)) : clamp(raw, lo, hi);
+            t.value = String(c);
+            s.value = String(c);
+            if (disp) disp.textContent = `${c} ${sid === 'V0' ? 'MeV' : 'fm'}`;
+        }
+    }
+
     toggleTransferGenericInputs() {
         const targetEl = document.getElementById('transfer_target');
         const show = targetEl && targetEl.value === 'generic';
@@ -345,6 +411,12 @@ class DWBADashboard {
         setIf('elastic_W0', params.W0);
         setIf('elastic_RW', params.R_W);
         setIf('elastic_aW', params.a_W);
+        setIf('inelastic_entrance_W0', params.W0);
+        setIf('inelastic_entrance_RW', params.R_W);
+        setIf('inelastic_entrance_aW', params.a_W);
+        setIf('inelastic_exit_W0', params.W0);
+        setIf('inelastic_exit_RW', params.R_W);
+        setIf('inelastic_exit_aW', params.a_W);
         this.toggleElasticGenericInputs && this.toggleElasticGenericInputs();
 
         // Update slider displays
@@ -352,14 +424,21 @@ class DWBADashboard {
         document.getElementById('R0-value').textContent = `${params.R0} fm`;
         document.getElementById('a0-value').textContent = `${params.a0} fm`;
         document.getElementById('radius-value').textContent = `${params.radius} fm`;
+        this.syncInelasticTabRealFromMainSliders();
 
         // Transfer-tab defaults (optional keys from /api/parameters)
-        setIf('transfer_V0', params.V0);
-        setIf('transfer_R0', params.R0);
-        setIf('transfer_a0', params.a0);
-        setIf('transfer_W0', params.transfer_W0);
-        setIf('transfer_RW', params.transfer_RW ?? params.R_W);
-        setIf('transfer_aW', params.transfer_aW ?? params.a_W);
+        setIf('transfer_entrance_V0', params.transfer_entrance_V0 ?? params.V0);
+        setIf('transfer_entrance_R0', params.transfer_entrance_R0 ?? params.R0);
+        setIf('transfer_entrance_a0', params.transfer_entrance_a0 ?? params.a0);
+        setIf('transfer_exit_V0', params.transfer_exit_V0 ?? params.transfer_entrance_V0 ?? params.V0);
+        setIf('transfer_exit_R0', params.transfer_exit_R0 ?? params.transfer_entrance_R0 ?? params.R0);
+        setIf('transfer_exit_a0', params.transfer_exit_a0 ?? params.transfer_entrance_a0 ?? params.a0);
+        setIf('transfer_entrance_W0', params.transfer_entrance_W0 ?? params.transfer_W0 ?? 0);
+        setIf('transfer_entrance_RW', params.transfer_entrance_RW ?? params.transfer_RW ?? params.R_W);
+        setIf('transfer_entrance_aW', params.transfer_entrance_aW ?? params.transfer_aW ?? params.a_W);
+        setIf('transfer_exit_W0', params.transfer_exit_W0 ?? params.transfer_entrance_W0 ?? params.transfer_W0 ?? 0);
+        setIf('transfer_exit_RW', params.transfer_exit_RW ?? params.transfer_entrance_RW ?? params.transfer_RW ?? params.R_W);
+        setIf('transfer_exit_aW', params.transfer_exit_aW ?? params.transfer_entrance_aW ?? params.transfer_aW ?? params.a_W);
         setIf('transfer_r_max', params.transfer_r_max);
         setIf('transfer_h', params.transfer_h);
         setIf('transfer_S', params.transfer_S);
@@ -457,12 +536,18 @@ class DWBADashboard {
             transfer_partial_L: int('transfer_partial_L', 1),
             transfer_l_i: int('transfer_l_i', 1),
             transfer_l_f: int('transfer_l_f', 0),
-            transfer_V0: num('transfer_V0', 40),
-            transfer_R0: num('transfer_R0', 2),
-            transfer_a0: num('transfer_a0', 0.6),
-            transfer_W0: num('transfer_W0', 0),
-            transfer_RW: num('transfer_RW', 2),
-            transfer_aW: num('transfer_aW', 0.6),
+            transfer_entrance_V0: num('transfer_entrance_V0', 40),
+            transfer_entrance_R0: num('transfer_entrance_R0', 2),
+            transfer_entrance_a0: num('transfer_entrance_a0', 0.6),
+            transfer_entrance_W0: num('transfer_entrance_W0', 0),
+            transfer_entrance_RW: num('transfer_entrance_RW', 2),
+            transfer_entrance_aW: num('transfer_entrance_aW', 0.6),
+            transfer_exit_V0: num('transfer_exit_V0', 40),
+            transfer_exit_R0: num('transfer_exit_R0', 2),
+            transfer_exit_a0: num('transfer_exit_a0', 0.6),
+            transfer_exit_W0: num('transfer_exit_W0', 0),
+            transfer_exit_RW: num('transfer_exit_RW', 2),
+            transfer_exit_aW: num('transfer_exit_aW', 0.6),
             transfer_r_max: num('transfer_r_max', 20),
             transfer_h: num('transfer_h', 0.01),
             transfer_target_A: int('transfer_target_A', 40),
@@ -661,6 +746,29 @@ class DWBADashboard {
         const params = { ...this.getParameters(), energies: energiesStr };
         params.L_values = isLi11Paper ? '0' : DEFAULT_CHANNEL_L;
 
+        const numOpt = (id, fallback) => {
+            const el = document.getElementById(id);
+            if (!el || String(el.value).trim() === '') return fallback;
+            const v = parseFloat(el.value);
+            return Number.isNaN(v) ? fallback : v;
+        };
+
+        params.inelastic_entrance_V0 = numOpt('inelastic_entrance_V0', params.V0);
+        params.inelastic_entrance_R0 = numOpt('inelastic_entrance_R0', params.R0);
+        params.inelastic_entrance_a0 = numOpt('inelastic_entrance_a0', params.a0);
+        params.inelastic_entrance_W0 = numOpt('inelastic_entrance_W0', params.W0);
+        params.inelastic_entrance_RW = numOpt('inelastic_entrance_RW', params.R_W);
+        params.inelastic_entrance_aW = numOpt('inelastic_entrance_aW', params.a_W);
+
+        if (!(document.getElementById('inelastic_exit_same_optical') || {}).checked) {
+            params.inelastic_exit_V0 = numOpt('inelastic_exit_V0', params.inelastic_entrance_V0);
+            params.inelastic_exit_R0 = numOpt('inelastic_exit_R0', params.inelastic_entrance_R0);
+            params.inelastic_exit_a0 = numOpt('inelastic_exit_a0', params.inelastic_entrance_a0);
+            params.inelastic_exit_W0 = numOpt('inelastic_exit_W0', params.inelastic_entrance_W0);
+            params.inelastic_exit_RW = numOpt('inelastic_exit_RW', params.inelastic_entrance_RW);
+            params.inelastic_exit_aW = numOpt('inelastic_exit_aW', params.inelastic_entrance_aW);
+        }
+
         this._setButtonLoading('calculate-inelastic-btn', true);
         this.showStatus('Calculating...', 'info');
         const startTime = Date.now();
@@ -696,6 +804,16 @@ class DWBADashboard {
         const params = { ...this.getParameters(), energies: energiesStr, L_values: LValuesStr };
         if (tE) params.transfer_energies = tE;
 
+        if ((document.getElementById('transfer_exit_same_bound') || {}).checked) {
+            delete params.transfer_exit_V0;
+            delete params.transfer_exit_R0;
+            delete params.transfer_exit_a0;
+        }
+        if ((document.getElementById('transfer_exit_same_optical') || {}).checked) {
+            delete params.transfer_exit_W0;
+            delete params.transfer_exit_RW;
+            delete params.transfer_exit_aW;
+        }
         this._setButtonLoading('calculate-transfer-btn', true);
         this.showStatus('Calculating transfer...', 'info');
         const startTime = Date.now();

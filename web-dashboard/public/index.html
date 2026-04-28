@@ -62,7 +62,6 @@
             border-radius: 12px;
             padding: 1rem 1.1rem;
             background: #fafbfc;
-            height: 100%;
         }
         .transfer-param-box h6 {
             color: #495057;
@@ -496,115 +495,227 @@
                 <div class="tab-pane fade" id="inelastic-panel" role="tabpanel">
                     <div class="control-panel mb-3">
                         <h4><i class="fas fa-exchange-alt"></i> Inelastic Scattering Parameters</h4>
-                        <p class="text-muted small mb-2">Projectile + target define the reaction (e.g. p + ¹²C). Target sets typical E_ex and β (λ=2). Real Woods–Saxon <strong>V₀, R₀, a₀</strong> and optional imaginary volume WS <strong>W₀, R_W, a_W</strong> on the <strong>Elastic</strong> tab are passed into <code>dwba.inelastic/distorted-wave-entrance</code> and <code>distorted-wave-exit</code> (same <code>optical-potential-woods-saxon</code> path as elastic dσ).</p>
-                        <div class="row mb-2">
-                            <div class="col-md-6">
-                                <div class="parameter-group">
-                                    <label for="inelastic-beam-energies">Beam energies (MeV, lab)</label>
-                                    <input type="text" class="form-control" id="inelastic-beam-energies" value="50" placeholder="e.g. 20,30,50">
-                                    <small class="text-muted">For standard macroscopic inelastic, channel partial waves use a default <em>L</em> set in the server.</small>
+                        <p class="text-muted small mb-2">
+                            Like the <strong>Transfer</strong> tab, use two boxes on the left for reaction setup and on the right for <strong>entrance</strong> vs <strong>exit</strong> optical potentials.
+                            Uncheck “same exit optical” to set different distorting wells for the excited channel. Real <strong>V₀, R₀, a₀</strong> at the entrance mirror the global sliders (below); calculation radius is shared.
+                        </p>
+                        <div class="row g-3 mb-2 align-items-lg-start">
+                            <div class="col-lg-6">
+                                <div class="transfer-param-box">
+                                    <h6><i class="fas fa-tachometer-alt"></i> Reaction &amp; kinematics</h6>
+                                    <div class="row">
+                                        <div class="col-12">
+                                            <div class="parameter-group">
+                                                <label for="inelastic-beam-energies">Beam energies (MeV, lab)</label>
+                                                <input type="text" class="form-control" id="inelastic-beam-energies" value="50" placeholder="e.g. 20,30,50">
+                                                <small class="text-muted">Standard macroscopic inelastic: default channel <em>L</em> set in the server.</small>
+                                            </div>
+                                        </div>
+                                        <div class="col-12">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_model">Model</label>
+                                                <select class="form-select" id="inelastic_model">
+                                                    <option value="standard" selected>Standard — macroscopic (p,p′) DWBA (λ, β; default channel <em>L</em> in API)</option>
+                                                    <option value="li11_paper1708">¹¹Li (p,p′) — Tanaka et al. (1708.07719), Table 1 optics</option>
+                                                    <option value="tanaka2017">Same as above (alias: Tanaka 2017 / arXiv:1708.07719)</option>
+                                                </select>
+                                                <small class="text-muted">Paper mode: use beam energies as proton lab <em>T</em> (MeV). Requires projectile <strong>p</strong>.</small>
+                                            </div>
+                                        </div>
+                                        <div class="col-12 border rounded p-3 mt-1 mb-1 bg-light" id="li11_paper_options" style="display: none;">
+                                            <div class="mb-2"><strong class="small">Paper 1708 — optional knobs</strong></div>
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    <div class="parameter-group">
+                                                        <label for="li11_optical_set">Optical set</label>
+                                                        <select class="form-select" id="li11_optical_set">
+                                                            <option value="V" selected>Set V (volume imaginary)</option>
+                                                            <option value="S">Set S (surface imaginary)</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="parameter-group">
+                                                        <label for="li11_beta_scale">β scale (strength)</label>
+                                                        <input type="number" class="form-control" id="li11_beta_scale" value="1" step="0.05" min="0">
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="parameter-group">
+                                                        <label for="li11_transfer_ell">Transfer multipole ℓ (paper dipole = 1)</label>
+                                                        <input type="number" class="form-control" id="li11_transfer_ell" value="1" step="1" min="1" max="5">
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="parameter-group">
+                                                        <label for="li11_L_max">Radial L_max</label>
+                                                        <input type="number" class="form-control" id="li11_L_max" value="22" step="1" min="4" max="60">
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="parameter-group">
+                                                        <label for="li11_r_max">r_max (fm)</label>
+                                                        <input type="number" class="form-control" id="li11_r_max" value="45" step="1" min="10" max="80">
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="parameter-group">
+                                                        <label for="li11_h">Radial step h</label>
+                                                        <input type="number" class="form-control" id="li11_h" value="0.02" step="0.005" min="0.005" max="0.1">
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="parameter-group">
+                                                        <label for="li11_theta_step">θ_cm step (deg)</label>
+                                                        <input type="number" class="form-control" id="li11_theta_step" value="5" step="1" min="1" max="30">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_projectile">Projectile</label>
+                                                <select class="form-select" id="inelastic_projectile">
+                                                    <option value="p" selected>Proton (p)</option>
+                                                    <option value="n">Neutron (n)</option>
+                                                    <option value="d">Deuteron (d)</option>
+                                                    <option value="a">Alpha (α)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_target">Target nucleus</label>
+                                                <select class="form-select" id="inelastic_target">
+                                                    <option value="12C" selected>¹²C (E_ex=4.44 MeV, β₂=0.25)</option>
+                                                    <option value="16O">¹⁶O (E_ex=6.13 MeV, β₂=0.2)</option>
+                                                    <option value="generic">Generic (use E_ex, β below)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="E_ex">Excitation energy E_ex (MeV)</label>
+                                                <input type="number" class="form-control" id="E_ex" value="4.44" step="0.1" min="0">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="lambda">Multipole λ (one or comma-separated)</label>
+                                                <input type="text" class="form-control" id="lambda" value="2" placeholder="2 or 2,3,4">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="beta">Deformation β</label>
+                                                <input type="number" class="form-control" id="beta" value="0.25" step="0.01" min="0" max="1">
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="parameter-group">
-                                    <label for="inelastic_model">Model</label>
-                                    <select class="form-select" id="inelastic_model">
-                                        <option value="standard" selected>Standard — macroscopic (p,p′) DWBA (λ, β; default channel <em>L</em> in API)</option>
-                                        <option value="li11_paper1708">¹¹Li (p,p′) — Tanaka et al. (1708.07719), Table 1 optics</option>
-                                        <option value="tanaka2017">Same as above (alias: Tanaka 2017 / arXiv:1708.07719)</option>
-                                    </select>
-                                    <small class="text-muted">Paper mode uses <strong>Energy range</strong> as proton lab T (MeV), e.g. <code>6</code> or <code>5,6,7</code>. Requires projectile <strong>p</strong>.</small>
+                            <div class="col-lg-6">
+                                <div class="transfer-param-box mb-2">
+                                    <h6><i class="fas fa-sign-in-alt"></i> Entrance channel (elastic)</h6>
+                                    <p class="small text-muted mb-2">Distorted wave χ<sub>i</sub> and macroscopic form factor dV/dr use this Woods–Saxon.</p>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_entrance_V0">V₀ (MeV)</label>
+                                                <input type="number" class="form-control" id="inelastic_entrance_V0" value="65" step="0.5" min="0" max="200">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_entrance_R0">R₀ (fm)</label>
+                                                <input type="number" class="form-control" id="inelastic_entrance_R0" value="7.5" step="0.05" min="0.5" max="20">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_entrance_a0">a₀ (fm)</label>
+                                                <input type="number" class="form-control" id="inelastic_entrance_a0" value="0.67" step="0.01" min="0.1" max="3">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_entrance_radius">Calculation radius (fm)</label>
+                                                <input type="number" class="form-control" id="inelastic_entrance_radius" value="100" step="1" min="0" max="400">
+                                                <small class="text-muted">Shared; mirrors top slider</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <h6 class="mt-2 small"><i class="fas fa-adjust"></i> Imaginary WS (entrance)</h6>
+                                    <div class="row">
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_entrance_W0">W₀ (MeV)</label>
+                                                <input type="number" class="form-control" id="inelastic_entrance_W0" min="0" max="80" value="30" step="0.5">
+                                                <small class="text-muted">0 = none</small>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_entrance_RW">R<sub>W</sub> (fm)</label>
+                                                <input type="number" class="form-control" id="inelastic_entrance_RW" min="0.5" max="12" value="7.5" step="0.1">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_entrance_aW">a<sub>W</sub> (fm)</label>
+                                                <input type="number" class="form-control" id="inelastic_entrance_aW" min="0.1" max="2" value="0.67" step="0.1">
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
-                        <div class="row border rounded p-3 mb-3 bg-light" id="li11_paper_options" style="display: none;">
-                            <div class="col-12"><strong class="small">Paper 1708 — optional knobs</strong></div>
-                            <div class="col-md-4">
-                                <div class="parameter-group">
-                                    <label for="li11_optical_set">Optical set</label>
-                                    <select class="form-select" id="li11_optical_set">
-                                        <option value="V" selected>Set V (volume imaginary)</option>
-                                        <option value="S">Set S (surface imaginary)</option>
-                                    </select>
+                                <div class="form-check mb-2">
+                                    <input type="checkbox" class="form-check-input" id="inelastic_exit_same_optical" checked>
+                                    <label class="form-check-label" for="inelastic_exit_same_optical">Use <strong>same</strong> optical potential for exit (excited) channel</label>
                                 </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="parameter-group">
-                                    <label for="li11_beta_scale">β scale (strength)</label>
-                                    <input type="number" class="form-control" id="li11_beta_scale" value="1" step="0.05" min="0">
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="parameter-group">
-                                    <label for="li11_transfer_ell">Transfer multipole ℓ (paper dipole = 1)</label>
-                                    <input type="number" class="form-control" id="li11_transfer_ell" value="1" step="1" min="1" max="5">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="parameter-group">
-                                    <label for="li11_L_max">Radial L_max</label>
-                                    <input type="number" class="form-control" id="li11_L_max" value="22" step="1" min="4" max="60">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="parameter-group">
-                                    <label for="li11_r_max">r_max (fm)</label>
-                                    <input type="number" class="form-control" id="li11_r_max" value="45" step="1" min="10" max="80">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="parameter-group">
-                                    <label for="li11_h">Radial step h</label>
-                                    <input type="number" class="form-control" id="li11_h" value="0.02" step="0.005" min="0.005" max="0.1">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="parameter-group">
-                                    <label for="li11_theta_step">θ_cm step (deg)</label>
-                                    <input type="number" class="form-control" id="li11_theta_step" value="5" step="1" min="1" max="30">
-                                </div>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="parameter-group">
-                                    <label for="inelastic_projectile">Projectile</label>
-                                    <select class="form-select" id="inelastic_projectile">
-                                        <option value="p" selected>Proton (p)</option>
-                                        <option value="n">Neutron (n)</option>
-                                        <option value="d">Deuteron (d)</option>
-                                        <option value="a">Alpha (α)</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="parameter-group">
-                                    <label for="inelastic_target">Target nucleus</label>
-                                    <select class="form-select" id="inelastic_target">
-                                        <option value="12C" selected>¹²C (E_ex=4.44 MeV, β₂=0.25)</option>
-                                        <option value="16O">¹⁶O (E_ex=6.13 MeV, β₂=0.2)</option>
-                                        <option value="generic">Generic (use E_ex, β below)</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="parameter-group">
-                                    <label for="E_ex">Excitation Energy E_ex (MeV)</label>
-                                    <input type="number" class="form-control" id="E_ex" value="4.44" step="0.1" min="0">
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="parameter-group">
-                                    <label for="lambda">Multipole λ (one or comma-separated: 2 or 2,3,4)</label>
-                                    <input type="text" class="form-control" id="lambda" value="2" placeholder="2 or 2,3,4">
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="parameter-group">
-                                    <label for="beta">Deformation Parameter β</label>
-                                    <input type="number" class="form-control" id="beta" value="0.25" step="0.01" min="0" max="1">
+                                <div class="transfer-param-box" id="inelastic-exit-optical-panel" style="display: none;">
+                                    <h6><i class="fas fa-sign-out-alt"></i> Exit channel (excited)</h6>
+                                    <p class="small text-muted mb-2">Distorted wave χ<sub>f</sub> at <em>E</em> − <em>E</em><sub>ex</sub>.</p>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_exit_V0">V₀ (MeV)</label>
+                                                <input type="number" class="form-control" id="inelastic_exit_V0" value="65" step="0.5" min="0" max="200">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_exit_R0">R₀ (fm)</label>
+                                                <input type="number" class="form-control" id="inelastic_exit_R0" value="7.5" step="0.05" min="0.5" max="20">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-12">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_exit_a0">a₀ (fm)</label>
+                                                <input type="number" class="form-control" id="inelastic_exit_a0" value="0.67" step="0.01" min="0.1" max="3">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <h6 class="mt-2 small"><i class="fas fa-adjust"></i> Imaginary WS (exit)</h6>
+                                    <div class="row">
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_exit_W0">W₀ (MeV)</label>
+                                                <input type="number" class="form-control" id="inelastic_exit_W0" min="0" max="80" value="30" step="0.5">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_exit_RW">R<sub>W</sub> (fm)</label>
+                                                <input type="number" class="form-control" id="inelastic_exit_RW" min="0.5" max="12" value="7.5" step="0.1">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="inelastic_exit_aW">a<sub>W</sub> (fm)</label>
+                                                <input type="number" class="form-control" id="inelastic_exit_aW" min="0.1" max="2" value="0.67" step="0.1">
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -666,10 +777,10 @@
                                 <p class="text-muted small mb-2">Generic preset uses approximate masses (931.494 MeV/c² per nucleon), **Q**, and placeholder separation energies for the bound-state well. **(d,p)** stripping curve is still the ¹⁶O benchmark.</p>
                             </div>
                         </div>
-                        <p class="text-muted small mb-0">Use the boxes below for transfer-specific kinematics, bound-state well, optical (imaginary) terms, and radial mesh. <strong>ℓ</strong> denotes orbital multipoles in the reduced <em>T<sub>ℓ</sub></em> coupling (not distorted-wave <em>L</em><sub>α</sub> sums). Leave <strong>Beam energies</strong> blank to use the <strong>Phase Shifts</strong> tab energy list.</p>
+                        <p class="text-muted small mb-0">Use the boxes below for transfer kinematics, <strong>separate entrance/exit</strong> bound wells (schematic zero-range), optional different imaginary parameters (echoed by the API), and radial mesh. <strong>ℓ</strong> denotes orbital multipoles in the reduced <em>T<sub>ℓ</sub></em> coupling.</p>
                     </div>
 
-                    <div class="row g-3 mb-3">
+                    <div class="row g-3 mb-3 align-items-lg-start">
                         <div class="col-lg-6">
                             <div class="transfer-param-box">
                                 <h6><i class="fas fa-tachometer-alt"></i> Kinematics &amp; coupling</h6>
@@ -717,25 +828,52 @@
                         </div>
                         <div class="col-lg-6">
                             <div class="transfer-param-box">
-                                <h6><i class="fas fa-mountain"></i> Bound state (real Woods–Saxon)</h6>
-                                <p class="small text-muted mb-2">Well for overlap / bound orbits (defaults track main panel V₀, R₀, a₀ if you sync sliders).</p>
+                                <h6><i class="fas fa-mountain"></i> Bound state — entrance (ℓ<sub>i</sub>)</h6>
+                                <p class="small text-muted mb-2">Woods–Saxon for the initial overlap orbit.</p>
                                 <div class="row">
                                     <div class="col-md-4">
                                         <div class="parameter-group">
-                                            <label for="transfer_V0">Depth V₀ (MeV)</label>
-                                            <input type="number" class="form-control" id="transfer_V0" value="40" step="0.5">
+                                            <label for="transfer_entrance_V0">V₀ (MeV)</label>
+                                            <input type="number" class="form-control" id="transfer_entrance_V0" value="40" step="0.5">
                                         </div>
                                     </div>
                                     <div class="col-md-4">
                                         <div class="parameter-group">
-                                            <label for="transfer_R0">Radius R₀ (fm)</label>
-                                            <input type="number" class="form-control" id="transfer_R0" value="2" step="0.05" min="0.5">
+                                            <label for="transfer_entrance_R0">R₀ (fm)</label>
+                                            <input type="number" class="form-control" id="transfer_entrance_R0" value="2" step="0.05" min="0.5">
                                         </div>
                                     </div>
                                     <div class="col-md-4">
                                         <div class="parameter-group">
-                                            <label for="transfer_a0">Diffuseness a₀ (fm)</label>
-                                            <input type="number" class="form-control" id="transfer_a0" value="0.6" step="0.05" min="0.1">
+                                            <label for="transfer_entrance_a0">a₀ (fm)</label>
+                                            <input type="number" class="form-control" id="transfer_entrance_a0" value="0.6" step="0.05" min="0.1">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="form-check mt-2 mb-0">
+                                    <input type="checkbox" class="form-check-input" id="transfer_exit_same_bound" checked>
+                                    <label class="form-check-label" for="transfer_exit_same_bound">Use <strong>same</strong> well for exit (ℓ<sub>f</sub>) bound state</label>
+                                </div>
+                                <div id="transfer-exit-bound-panel" style="display: none;" class="mt-3 pt-2 border-top">
+                                    <h6 class="small"><i class="fas fa-mountain"></i> Bound state — exit (ℓ<sub>f</sub>)</h6>
+                                    <div class="row">
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="transfer_exit_V0">V₀ (MeV)</label>
+                                                <input type="number" class="form-control" id="transfer_exit_V0" value="40" step="0.5">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="transfer_exit_R0">R₀ (fm)</label>
+                                                <input type="number" class="form-control" id="transfer_exit_R0" value="2" step="0.05" min="0.5">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="transfer_exit_a0">a₀ (fm)</label>
+                                                <input type="number" class="form-control" id="transfer_exit_a0" value="0.6" step="0.05" min="0.1">
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -743,28 +881,55 @@
                         </div>
                     </div>
 
-                    <div class="row g-3 mb-3">
+                    <div class="row g-3 mb-3 align-items-lg-start">
                         <div class="col-lg-6">
                             <div class="transfer-param-box">
-                                <h6><i class="fas fa-eye-slash"></i> Optical model (imaginary volume)</h6>
-                                <p class="small text-muted mb-2">Recorded in API response for your notes; the current schematic zero-range transfer uses real kinematics only (absorption not yet folded into this path).</p>
+                                <h6><i class="fas fa-eye-slash"></i> Optical (imaginary) — entrance</h6>
+                                <p class="small text-muted mb-2">Echoed in API; schematic path is still real kinematics only.</p>
                                 <div class="row">
                                     <div class="col-md-4">
                                         <div class="parameter-group">
-                                            <label for="transfer_W0">W₀ (MeV)</label>
-                                            <input type="number" class="form-control" id="transfer_W0" value="0" min="0" max="80" step="0.5" placeholder="0">
+                                            <label for="transfer_entrance_W0">W₀ (MeV)</label>
+                                            <input type="number" class="form-control" id="transfer_entrance_W0" value="0" min="0" max="80" step="0.5" placeholder="0">
                                         </div>
                                     </div>
                                     <div class="col-md-4">
                                         <div class="parameter-group">
-                                            <label for="transfer_RW">R<sub>W</sub> (fm)</label>
-                                            <input type="number" class="form-control" id="transfer_RW" value="2" step="0.05" min="0.5">
+                                            <label for="transfer_entrance_RW">R<sub>W</sub> (fm)</label>
+                                            <input type="number" class="form-control" id="transfer_entrance_RW" value="2" step="0.05" min="0.5">
                                         </div>
                                     </div>
                                     <div class="col-md-4">
                                         <div class="parameter-group">
-                                            <label for="transfer_aW">a<sub>W</sub> (fm)</label>
-                                            <input type="number" class="form-control" id="transfer_aW" value="0.6" step="0.05" min="0.1">
+                                            <label for="transfer_entrance_aW">a<sub>W</sub> (fm)</label>
+                                            <input type="number" class="form-control" id="transfer_entrance_aW" value="0.6" step="0.05" min="0.1">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="form-check mt-2 mb-0">
+                                    <input type="checkbox" class="form-check-input" id="transfer_exit_same_optical" checked>
+                                    <label class="form-check-label" for="transfer_exit_same_optical">Same imaginary parameters for <strong>exit</strong> channel (API echo)</label>
+                                </div>
+                                <div id="transfer-exit-optical-panel" style="display: none;" class="mt-3 pt-2 border-top">
+                                    <h6 class="small">Exit — imaginary WS</h6>
+                                    <div class="row">
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="transfer_exit_W0">W₀ (MeV)</label>
+                                                <input type="number" class="form-control" id="transfer_exit_W0" value="0" min="0" max="80" step="0.5">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="transfer_exit_RW">R<sub>W</sub> (fm)</label>
+                                                <input type="number" class="form-control" id="transfer_exit_RW" value="2" step="0.05" min="0.5">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="parameter-group">
+                                                <label for="transfer_exit_aW">a<sub>W</sub> (fm)</label>
+                                                <input type="number" class="form-control" id="transfer_exit_aW" value="0.6" step="0.05" min="0.1">
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
