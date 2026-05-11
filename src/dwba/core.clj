@@ -2,9 +2,10 @@
   (:require [fastmath.core :as m]
             [fastmath.vector :as v]
             [fastmath.polynomials :as poly]
-            [fastmath.special :as spec]))
-(use 'complex)
-(use 'functions)
+            [fastmath.special :as spec]
+            [functions :as f]
+            [complex :as c]))
+
 (use 'dwba.finite-well)
 (use 'dwba.transfer)
 (use 'dwba.form-factors)
@@ -18,23 +19,23 @@
 
 (def ws-stand [40 2.89 0.65]) ;standard WS function parameters
 (def phase-data0 (->> xs
-                     (mapv (fn[p] [ p (r-matrix-a 1 ws-stand p 0)]))))
+                     (mapv (fn[p] [ p (f/r-matrix-a 1 ws-stand p 0)]))))
 (def shift-data (->> xs
-                     (mapv (fn[p] [ p (phase-shift 10 ws-stand p 0)]))))
+                     (mapv (fn[p] [ p (f/phase-shift 10 ws-stand p 0)]))))
 
 (def phase0-E0-data (->> Es
-                       (mapv (fn[p] [ p (re (phase-shift0 p ws-stand 3. 0))]))))
+                       (mapv (fn[p] [ p (c/re (f/phase-shift0 p ws-stand 3. 0))]))))
 
 (def phase0-E1-data (->> Es
-                        (mapv (fn[p] [ p (re (phase-shift0 p ws-stand 3. 1))]))))
+                        (mapv (fn[p] [ p (c/re (f/phase-shift0 p ws-stand 3. 1))]))))
 
 (def Ls (range 20))
 
  (def sigmaL-data (->> Ls
-                       (mapv (fn[p] [ p (sigma-L0 1 ws-stand 3 p)]))))
+                       (mapv (fn[p] [ p (f/sigma-L0 1 ws-stand 3 p)]))))
 
 (def phase-E1-data (->> Es
-                        (mapv (fn[p] [ p (phase-shift p ws-stand 1)]))))
+                        (mapv (fn[p] [ p (f/phase-shift p ws-stand 1)]))))
 
 ; incanter plotting
 

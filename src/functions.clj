@@ -123,6 +123,43 @@
   ([fn1 L eta x dx] ;for hankel functions with L dependence and complex numbers
    (c/div (c/subt2 (fn1 L eta (+ x dx)) (fn1 L eta x)) dx))
 )
+
+;; --- Real quadrature (definite integral) ---
+
+(defn integrate-real
+  "Evaluate ∫_a^b f(x) dx for real **f** returning a real double (or number coercible to double).
+  Uses the **composite Simpson** rule on a uniform grid. **n-segments** is the number of
+  subintervals (must be ≥ 2 and even; if odd or < 2 it is adjusted to the next valid even).
+
+  Swapped limits **b < a** return the negative of ∫_b^a. **a = b** yields 0.
+
+  Optional **n-segments** defaults to 1000 (good starting choice for smooth **f** on finite **[a,b]**)."
+  ([f a b]
+   (integrate-real f a b 1000))
+  ([f a b n-segments]
+   (let [a (double a)
+         b (double b)]
+     (cond
+       (== a b) 0.0
+       (> a b) (- (integrate-real f b a n-segments))
+       :else
+       (let [n-raw (long n-segments)
+             n (long (cond
+                       (< n-raw 2) 2
+                       (even? n-raw) n-raw
+                       :else (inc n-raw)))
+             h (/ (- b a) (double n))
+             simpson-sum (loop [i 1 sum 0.0]
+                           (if (>= i n)
+                             sum
+                             (let [x (+ a (* (double i) h))
+                                   y (double (f x))
+                                   coeff (if (odd? i) 4.0 2.0)]
+                               (recur (inc i) (+ sum (* coeff y))))))
+             fa (double (f a))
+             fb (double (f b))]
+         (* (/ h 3.0) (+ fa fb simpson-sum)))))))
+
 (defn subtract-second [a b] [(first a) (- (second a) (second b))])
 
 (defn to-vec2 [x] (v/vec2 (c/re x) (c/im x)))
