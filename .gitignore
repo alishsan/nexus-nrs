@@ -30,8 +30,20 @@ data/
 paper_data/
 results/
 
-# Paper (manuscripts, cover letters, data generators, build artifacts)
-paper/
+# Paper: ignore manuscripts, cover letters and LaTeX build artifacts, but KEEP the
+# reproducibility layer the manuscript cites (data generators, benchmark data,
+# experimental datasets) so every path referenced in the paper resolves in a clean
+# checkout. Note: this must be "paper/*", not "paper/" -- git cannot re-include a
+# file whose parent directory is itself excluded.
+paper/*
+!paper/*.clj
+!paper/*.sh
+!paper/*.json
+!paper/*.edn
+!paper/*.md
+# ...except this stale Feb-2026 draft (placeholder author names, predates the
+# resonance-transfer work). Keep it out of the citable artifact.
+paper/mdpi_proceedings_manuscript.md
 
 # Temporary analysis files
 *.png
