@@ -190,17 +190,23 @@
   Radii **R = r₀ × 16^{1/3}**: real V = 88.955, r₀ = 1.149, a = 0.751;
   volume imaginary Wi = 2.348, r₀i = 1.345, ai = 0.603;
   surface imaginary Ws = 10.218, r₀s = 1.397, as = 0.687 (derivative WS: −4Wsf(1−f));
-  spin–orbit Vso = 3.557, r₀so = 0.972, aso = 1.011; Coulomb Rc = 1.303 × 16^{1/3}."
-  [L s j]
+  spin–orbit Vso = 3.557, r₀so = 0.972, aso = 1.011; Coulomb Rc = 1.303 × 16^{1/3}.
+
+  **`:no-spin-orbit true`** ⇒ **Vso = 0** (central WS + Coulomb only), mirroring the
+  **`{:no-spin-orbit true}`** opts pattern already used for the bound-state Numerov solver
+  in **`dwba.transfer`** (**`o17-d52-bound-phi-n`**/**`o17-s12-bound-phi-n`**). Use to isolate the
+  spin–orbit **NX=4** card's contribution to the entrance-channel distorted wave."
+  [L s j & {:keys [no-spin-orbit] :or {no-spin-orbit false}}]
   (let [z1 1 z2 8
         a16 (a16)
-        rc (* 1.303 a16)]
+        rc (* 1.303 a16)
+        vso (if no-spin-orbit 0.0 3.557)]
     (fn [^double r]
       (t/optical-potential-woods-saxon r
                                        [88.955  (* 1.149 a16)  0.751]   ; real WS
                                        [2.348   (* 1.345 a16)  0.603]   ; volume imaginary
                                        [10.218  (* 1.397 a16)  0.687]   ; surface imaginary
-                                       3.557 (* 0.972 a16) 1.011       ; spin-orbit
+                                       vso (* 0.972 a16) 1.011         ; spin-orbit
                                        L s j z1 z2 rc))))
 
 (defn- a17 ^double [] (Math/pow 17.0 (/ 1.0 3.0)))
@@ -211,17 +217,20 @@
   volume imaginary Vi = 2.061, same r₀ and a as real;
   surface imaginary Vs = 7.670, r₀s = 1.302, as = 0.528 (derivative WS: −4Vsf(1−f));
   spin–orbit Vso = 5.296 (real part; Im = 0.106 neglected), r₀so = 0.934, aso = 0.590;
-  Coulomb Rc = 1.419 × 17^{1/3}."
-  [L s j]
+  Coulomb Rc = 1.419 × 17^{1/3}.
+
+  **`:no-spin-orbit true`** ⇒ **Vso = 0**; see **`optical-u-deuteron-o16`**."
+  [L s j & {:keys [no-spin-orbit] :or {no-spin-orbit false}}]
   (let [z1 1 z2 8
         a17 (a17)
-        rc  (* 1.419 a17)]
+        rc  (* 1.419 a17)
+        vso (if no-spin-orbit 0.0 5.296)]
     (fn [^double r]
       (t/optical-potential-woods-saxon r
                                        [49.544 (* 1.146 a17) 0.675]  ; real WS
                                        [2.061  (* 1.146 a17) 0.675]  ; volume imaginary
                                        [7.670  (* 1.302 a17) 0.528]  ; surface imaginary
-                                       5.296 (* 0.934 a17) 0.590    ; spin-orbit (real)
+                                       vso (* 0.934 a17) 0.590      ; spin-orbit (real)
                                        L s j z1 z2 rc))))
 
 (defn- deuteron-j-for-partial-wave
@@ -274,10 +283,15 @@
   (**`distorted-wave-optical`**; **`:bind-flux`** uses per-channel **η** as **`:bind-eta`**).
   **`:imag-scale`** — multiply **Im U** of **both** entrance and exit optical potentials by this factor (**1.0** default);
   values **< 1** reduce absorption and often **lower** backward-angle DWBA cross sections that were inflated by the
-  imaginary **χ_α χ_β** interference (see example script)."
-  [& {:keys [r-max h L-max e-cm-i transfer-ell chi-normalize-mode imag-scale]
+  imaginary **χ_α χ_β** interference (see example script).
+
+  **`:no-spin-orbit true`** — sets **Vso = 0** on **both** the entrance (**`optical-u-deuteron-o16`**) and exit
+  (**`optical-u-proton-o17`**) distorted-wave optical potentials (bound-state **φ_n** is unaffected — it already
+  has no explicit spin-orbit term). Isolation test for whether the DWUCK4 **NZ=4** spin-orbit card mapping is
+  responsible for radial-integral mismatches vs Nexus."
+  [& {:keys [r-max h L-max e-cm-i transfer-ell chi-normalize-mode imag-scale no-spin-orbit]
       :or {r-max 100.0 h 0.05 L-max 20 transfer-ell o16-dp-bound-ell
-           chi-normalize-mode :coulomb-tail imag-scale 1.0}}]
+           chi-normalize-mode :coulomb-tail imag-scale 1.0 no-spin-orbit false}}]
   (when-not (#{:raw :max :coulomb-tail :bind-flux} chi-normalize-mode)
     (throw (ex-info "o16-dp-radial-I-rows-handbook: :chi-normalize-mode must be :raw, :max, :coulomb-tail, or :bind-flux"
                     {:chi-normalize-mode chi-normalize-mode})))
@@ -295,11 +309,13 @@
         imag-s (double imag-scale)
         Ud (fn [^long La]
               (wrap-optical-scale-imag
-                (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La))
+                (optical-u-deuteron-o16 La 1.0 (deuteron-j-for-partial-wave La)
+                                        :no-spin-orbit no-spin-orbit)
                 imag-s))
         Up (fn [^long Lb]
               (wrap-optical-scale-imag
-                (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb))
+                (optical-u-proton-o17 Lb 0.5 (proton-j-for-partial-wave Lb)
+                                      :no-spin-orbit no-spin-orbit)
                 imag-s))
         chi-alpha!
         (memoize

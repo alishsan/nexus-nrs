@@ -335,8 +335,9 @@
                 (vec (take min-len-f phi-i))
                 (vec (take min-len-f phi-f-finite))
                 r-max h :zero-range D0)
-      dsigma-finite-mb (transfer/transfer-differential-cross-section
-                        T-finite S-factor k-i k-f mass-factor-i mass-factor-f)
+      dsigma-finite (transfer/transfer-differential-cross-section
+                     T-finite S-factor k-i k-f mass-factor-i mass-factor-f)
+      dsigma-finite-mb (* 10.0 dsigma-finite)
       ;; Experimental reference (same as Example 7)
       exp-dsigma-mb 0.07]
   (println "   Transfer cross section (L=0 isotropic):")

@@ -160,6 +160,8 @@
              fb (double (f b))]
          (* (/ h 3.0) (+ fa fb simpson-sum)))))))
 
+;; Lagrange-mesh calculable R-matrix (Baye): see **`functions.rmatrix-lagrange`**.
+
 (defn subtract-second [a b] [(first a) (- (second a) (second b))])
 
 (defn to-vec2 [x] (v/vec2 (c/re x) (c/im x)))

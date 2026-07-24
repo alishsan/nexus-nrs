@@ -47,16 +47,19 @@
 (defn subt [x & y] (reduce subt2 (cons x y)))
 
 (defn mul2 [x y] "Multiplies the given complex numbers together."
-  (complex-polar (+ (arg x) (arg y))
-                      (* (mag x) (mag y))))
+  (let [ax (re x) bx (im x) ay (re y) by (im y)]
+    (complex-cartesian (- (* ax ay) (* bx by))
+                        (+ (* ax by) (* bx ay)))))
 
 
 (defn mul [x & y] "Multiplies the given complex numbers together."
   (reduce mul2 (cons x y)))
 
-(defn div [x y] "Multiplies the given complex numbers together."
-  (complex-polar (- (arg x) (arg y))
-                      (/ (mag x) (mag y))))
+(defn div [x y] "Divides x by y (complex division)."
+  (let [ax (re x) bx (im x) ay (re y) by (im y)
+        denom (+ (* ay ay) (* by by))]
+    (complex-cartesian (/ (+ (* ax ay) (* bx by)) denom)
+                        (/ (- (* bx ay) (* ax by)) denom))))
 
 (defn cpow [t z] "Complex power of a real number"
   (complex-polar (* (im z) (Math/log t)) (Math/pow t (re z)))
